@@ -59,8 +59,8 @@ interface ChecklistGroup {
 export default function SurgeryDetailPage() {
   const { surgeryId } = useParams<{ surgeryId: string }>();
   const navigate = useNavigate();
-  const { selectedSurgery, fetchSurgeryById, loading, clearSelectedSurgery } = useSurgeryStore();
-  const { submitRectification, anomalies } = useAnomalyStore();
+  const { selectedSurgery, fetchSurgeryById, loading, clearSelectedSurgery, syncAnomaliesToSurgeries } = useSurgeryStore();
+  const { submitRectification, getAllAnomalies } = useAnomalyStore();
   const { addNotification } = useAppStore();
   const [expandedGroups, setExpandedGroups] = useState<Record<ItemType, boolean>>({
     image: true,
@@ -82,15 +82,17 @@ export default function SurgeryDetailPage() {
     };
   }, [surgeryId, fetchSurgeryById, clearSelectedSurgery]);
 
+  const allAnomalies = useMemo(() => getAllAnomalies(), [getAllAnomalies, selectedSurgery]);
+
   const currentAnomaly = useMemo<Anomaly | undefined>(() => {
+    if (!surgeryId) return undefined;
+    const anomalyFromStore = allAnomalies.find((a) => a.surgeryId === surgeryId);
+    if (anomalyFromStore) return anomalyFromStore;
     if (selectedSurgery?.anomalies && selectedSurgery.anomalies.length > 0) {
       return selectedSurgery.anomalies[0];
     }
-    if (surgeryId) {
-      return anomalies.find((a) => a.surgeryId === surgeryId);
-    }
     return undefined;
-  }, [selectedSurgery, anomalies, surgeryId]);
+  }, [selectedSurgery, allAnomalies, surgeryId]);
 
   const archiveItemsByType = useMemo(() => {
     const result: Record<ItemType, ArchiveItem[]> = {
@@ -180,6 +182,7 @@ export default function SurgeryDetailPage() {
       });
       setRectificationResult('');
       setAttachmentName('');
+      syncAnomaliesToSurgeries();
       if (surgeryId) {
         fetchSurgeryById(surgeryId);
       }

@@ -27,15 +27,17 @@ interface StatusChangeItem {
 
 export default function OverviewPage() {
   const { kpiData, refreshAll, getTrendChartData, getAllDimensionStatistics } = useStatisticStore();
-  const { surgeries, fetchSurgeries } = useSurgeryStore();
+  const { surgeries, fetchSurgeries, syncAnomaliesToSurgeries, getAllSurgeries } = useSurgeryStore();
   const { getAllAnomalies } = useAnomalyStore();
   const [trendDim, setTrendDim] = useState<TrendDimension>('day');
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     refreshAll();
-    fetchSurgeries();
-  }, [refreshAll, fetchSurgeries]);
+    fetchSurgeries().then(() => {
+      syncAnomaliesToSurgeries();
+    });
+  }, [refreshAll, fetchSurgeries, syncAnomaliesToSurgeries]);
 
   const trendChartData = useMemo(() => {
     const rawData = getTrendChartData();
@@ -83,13 +85,13 @@ export default function OverviewPage() {
     }
   }, [trendDim, getTrendChartData]);
 
+  const allAnomalies = useMemo(() => getAllAnomalies(), [getAllAnomalies, surgeries]);
+
   const anomalyPieData = useMemo(() => {
     const typeCount: Record<string, number> = {};
-    surgeries.forEach((s) => {
-      s.anomalies.forEach((a) => {
-        const typeName = getAnomalyTypeInfo(a.anomalyType).label;
-        typeCount[typeName] = (typeCount[typeName] || 0) + 1;
-      });
+    allAnomalies.forEach((a) => {
+      const typeName = getAnomalyTypeInfo(a.anomalyType).label;
+      typeCount[typeName] = (typeCount[typeName] || 0) + 1;
     });
     const colors = ['#EF4444', '#F59E0B', '#8B5CF6', '#3B82F6'];
     return Object.entries(typeCount).map(([name, value], index) => ({
@@ -97,7 +99,7 @@ export default function OverviewPage() {
       value,
       color: colors[index % colors.length],
     }));
-  }, [surgeries]);
+  }, [allAnomalies]);
 
   const statusChangeList = useMemo((): StatusChangeItem[] => {
     const allChanges: StatusChangeItem[] = surgeries
@@ -118,10 +120,12 @@ export default function OverviewPage() {
     setExporting(true);
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
+      syncAnomaliesToSurgeries();
       if (kpiData) {
         const now = new Date();
         const period = `${now.getFullYear()}年${now.getMonth() + 1}月`;
         const allAnomalies = getAllAnomalies();
+        const allSurgeries = getAllSurgeries();
         const allStatistics = getAllDimensionStatistics();
         exportMonthlyReport(
           {
@@ -138,7 +142,7 @@ export default function OverviewPage() {
               topEquipments: kpiData.topEquipments,
               topSurgeons: kpiData.topSurgeons,
             },
-            surgeries,
+            surgeries: allSurgeries,
             anomalies: allAnomalies,
             statistics: allStatistics,
           },

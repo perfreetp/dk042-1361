@@ -63,6 +63,7 @@ export default function AnomaliesPage() {
     reviewAnomaly,
     getTypeStats,
     getStatusStats,
+    getFilteredAnomalies,
   } = useAnomalyStore();
   const { addNotification } = useAppStore();
 
@@ -90,8 +91,8 @@ export default function AnomaliesPage() {
     opinion: '',
   });
 
-  const typeStats = useMemo(() => getTypeStats(), [getTypeStats]);
-  const statusStats = useMemo(() => getStatusStats(), [getStatusStats]);
+  const typeStats = useMemo(() => getTypeStats(), [getTypeStats, total, anomalies]);
+  const statusStats = useMemo(() => getStatusStats(), [getStatusStats, total, anomalies]);
 
   useEffect(() => {
     fetchAnomalies();
@@ -146,7 +147,6 @@ export default function AnomaliesPage() {
       });
     }
     setAssignModalOpen(false);
-    fetchAnomalies();
   };
 
   const openRectify = (id: string) => {
@@ -168,7 +168,6 @@ export default function AnomaliesPage() {
       message: '整改结果已提交，等待复核',
     });
     setRectifyModalOpen(false);
-    fetchAnomalies();
   };
 
   const openReview = (id: string) => {
@@ -190,13 +189,13 @@ export default function AnomaliesPage() {
       message: passed ? '异常已关闭' : '请整改后重新提交',
     });
     setReviewModalOpen(false);
-    fetchAnomalies();
   };
 
   const handleExport = () => {
+    const filtered = getFilteredAnomalies();
     const exportData = selectedIds.length > 0
-      ? anomalies.filter((a) => selectedIds.includes(a.anomalyId))
-      : anomalies;
+      ? filtered.filter((a) => selectedIds.includes(a.anomalyId))
+      : filtered;
     exportAnomalyList(exportData, '异常记录清单');
   };
 
@@ -277,6 +276,14 @@ export default function AnomaliesPage() {
       width: 320,
       render: (_, record) => (
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<Eye className="w-4 h-4" />}
+            onClick={() => navigate(`/surgery/${record.surgeryId}`)}
+          >
+            查看详情
+          </Button>
           {record.status === 'pending' ? (
             <Button
               variant="ghost"
@@ -288,53 +295,23 @@ export default function AnomaliesPage() {
             </Button>
           ) : null}
           {(record.status === 'assigned' || record.status === 'rectifying') ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                leftIcon={<Eye className="w-4 h-4" />}
-                onClick={() => navigate(`/surgery/${record.surgeryId}`)}
-              >
-                查看详情
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                leftIcon={<ClipboardCheck className="w-4 h-4" />}
-                onClick={() => openRectify(record.anomalyId)}
-              >
-                整改提交
-              </Button>
-            </>
-          ) : null}
-          {record.status === 'reviewing' ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                leftIcon={<Eye className="w-4 h-4" />}
-                onClick={() => navigate(`/surgery/${record.surgeryId}`)}
-              >
-                查看详情
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                leftIcon={<CheckCircle2 className="w-4 h-4" />}
-                onClick={() => openReview(record.anomalyId)}
-              >
-                复核
-              </Button>
-            </>
-          ) : null}
-          {(record.status === 'closed' || record.status === 'rejected') ? (
             <Button
               variant="ghost"
               size="sm"
-              leftIcon={<Eye className="w-4 h-4" />}
-              onClick={() => navigate(`/surgery/${record.surgeryId}`)}
+              leftIcon={<ClipboardCheck className="w-4 h-4" />}
+              onClick={() => openRectify(record.anomalyId)}
             >
-              查看详情
+              整改提交
+            </Button>
+          ) : null}
+          {record.status === 'reviewing' ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={<CheckCircle2 className="w-4 h-4" />}
+              onClick={() => openReview(record.anomalyId)}
+            >
+              复核
             </Button>
           ) : null}
         </div>

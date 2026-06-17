@@ -50,7 +50,9 @@ interface AnomalyState {
   getTypeStats: () => Record<AnomalyType | 'all', number>;
   getStatusStats: () => Record<AnomalyStatus | 'all', number>;
   getAllAnomalies: () => Anomaly[];
+  getFilteredAnomalies: () => Anomaly[];
   clearSelectedAnomaly: () => void;
+  refreshFilteredData: () => void;
 }
 
 const statusNameMap: Record<AnomalyStatus, string> = {
@@ -99,7 +101,7 @@ export const useAnomalyStore = create<AnomalyState>()(
           const { page, pageSize } = get();
           const start = (page - 1) * pageSize;
           const paged = filtered.slice(start, start + pageSize);
-          set({ anomalies: all, total, loading: false });
+          set({ anomalies: paged, total, loading: false });
         } catch (error) {
           set({ error: error instanceof Error ? error.message : '获取异常列表失败', loading: false });
         }
@@ -169,6 +171,7 @@ export const useAnomalyStore = create<AnomalyState>()(
           anomalies: anomalies.map(updater),
           selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
         });
+        get().refreshFilteredData();
       },
 
       batchAssign: (ids, assignee, deadline, remark) => {
@@ -198,6 +201,7 @@ export const useAnomalyStore = create<AnomalyState>()(
           selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
           selectedIds: [],
         });
+        get().refreshFilteredData();
       },
 
       submitRectification: ({ anomalyId, result, attachmentUrl }) => {
@@ -226,6 +230,7 @@ export const useAnomalyStore = create<AnomalyState>()(
           anomalies: anomalies.map(updater),
           selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
         });
+        get().refreshFilteredData();
       },
 
       reviewAnomaly: ({ anomalyId, opinion, passed }) => {
@@ -255,11 +260,12 @@ export const useAnomalyStore = create<AnomalyState>()(
           anomalies: anomalies.map(updater),
           selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
         });
+        get().refreshFilteredData();
       },
 
       getTypeStats: () => {
-        const { anomalies } = get();
-        const all = anomalies.length > 0 ? anomalies : getAllAnomalies();
+        const persisted = get().anomalies;
+        const all = persisted.length > 0 ? persisted : getAllAnomalies();
         const stats: Record<string, number> = { all: all.length };
         const types: AnomalyType[] = ['overdue', 'missing_items', 'patient_mismatch', 'duplicate'];
         types.forEach((t) => {
@@ -269,7 +275,8 @@ export const useAnomalyStore = create<AnomalyState>()(
       },
 
       getStatusStats: () => {
-        const all = getAllAnomalies();
+        const persisted = get().anomalies;
+        const all = persisted.length > 0 ? persisted : getAllAnomalies();
         const stats: Record<string, number> = { all: all.length };
         const statuses: AnomalyStatus[] = ['pending', 'assigned', 'rectifying', 'reviewing', 'closed', 'rejected'];
         statuses.forEach((s) => {
@@ -279,7 +286,37 @@ export const useAnomalyStore = create<AnomalyState>()(
       },
 
       getAllAnomalies: () => {
-        return getAllAnomalies();
+        const persisted = get().anomalies;
+        return persisted.length > 0 ? persisted : getAllAnomalies();
+      },
+
+      getFilteredAnomalies: () => {
+        const all = get().getAllAnomalies();
+        const { typeFilter, statusFilter } = get();
+        let filtered = all;
+        if (typeFilter !== 'all') {
+          filtered = filtered.filter((a) => a.anomalyType === typeFilter);
+        }
+        if (statusFilter !== 'all') {
+          filtered = filtered.filter((a) => a.status === statusFilter);
+        }
+        return filtered;
+      },
+
+      refreshFilteredData: () => {
+        const { page, pageSize, typeFilter, statusFilter } = get();
+        const all = get().getAllAnomalies();
+        let filtered = all;
+        if (typeFilter !== 'all') {
+          filtered = filtered.filter((a) => a.anomalyType === typeFilter);
+        }
+        if (statusFilter !== 'all') {
+          filtered = filtered.filter((a) => a.status === statusFilter);
+        }
+        const total = filtered.length;
+        const start = (page - 1) * pageSize;
+        const paged = filtered.slice(start, start + pageSize);
+        set({ anomalies: paged, total });
       },
 
       clearSelectedAnomaly: () => set({ selectedAnomaly: null }),
