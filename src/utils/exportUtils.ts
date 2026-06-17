@@ -103,69 +103,205 @@ export const exportArchiveItems = (items: ArchiveItem[], fileName: string = '归
 
 export const exportMonthlyReport = (data: {
   period: string;
-  kpi: { totalSurgeries: number; archivedSurgeries: number; archiveRate: number; totalAnomalies: number };
+  kpi: {
+    totalSurgeries: number;
+    archivedSurgeries: number;
+    archiveRate: number;
+    totalAnomalies: number;
+    compareLastPeriod: {
+      surgeries: number;
+      archiveRate: number;
+      anomalies: number;
+    };
+    anomalyTypeStats?: Record<string, number>;
+    topDepartments?: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+    topOperatingRooms?: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+    topEquipments?: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+    topSurgeons?: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+  };
   surgeries: Surgery[];
   anomalies: Anomaly[];
   statistics: StatisticData[];
 }, fileName: string): void => {
   const workbook = XLSX.utils.book_new();
 
-  const summaryData = [
-    { '统计周期': data.period },
-    {},
-    { '指标': '手术总台次', '数值': formatNumber(data.kpi.totalSurgeries) },
-    { '指标': '已归档数', '数值': formatNumber(data.kpi.archivedSurgeries) },
-    { '指标': '归档完成率', '数值': formatPercent(data.kpi.archiveRate) },
-    { '指标': '异常总数', '数值': formatNumber(data.kpi.totalAnomalies) },
+  const summaryData: Array<Record<string, string | number>> = [];
+  summaryData.push({ '统计周期': data.period });
+  summaryData.push({});
+  summaryData.push({ '指标': '手术总台次', '数值': formatNumber(data.kpi.totalSurgeries), '环比': `${data.kpi.compareLastPeriod.surgeries > 0 ? '↑' : data.kpi.compareLastPeriod.surgeries < 0 ? '↓' : '—'} ${Math.abs(data.kpi.compareLastPeriod.surgeries)}%` });
+  summaryData.push({ '指标': '已归档数', '数值': formatNumber(data.kpi.archivedSurgeries), '环比': '' });
+  summaryData.push({ '指标': '归档完成率', '数值': formatPercent(data.kpi.archiveRate), '环比': `${data.kpi.compareLastPeriod.archiveRate > 0 ? '↑' : data.kpi.compareLastPeriod.archiveRate < 0 ? '↓' : '—'} ${Math.abs(data.kpi.compareLastPeriod.archiveRate)}%` });
+  summaryData.push({ '指标': '归档率环比变化', '数值': `${data.kpi.compareLastPeriod.archiveRate > 0 ? '上升' : data.kpi.compareLastPeriod.archiveRate < 0 ? '下降' : '持平'} ${Math.abs(data.kpi.compareLastPeriod.archiveRate)}个百分点`, '环比': '' });
+  summaryData.push({ '指标': '异常总数', '数值': formatNumber(data.kpi.totalAnomalies), '环比': `${data.kpi.compareLastPeriod.anomalies > 0 ? '↑' : data.kpi.compareLastPeriod.anomalies < 0 ? '↓' : '—'} ${Math.abs(data.kpi.compareLastPeriod.anomalies)}%` });
+
+  if (data.kpi.anomalyTypeStats) {
+    summaryData.push({});
+    summaryData.push({ '指标': '—— 各异常类型统计 ——', '数值': '', '环比': '' });
+    Object.entries(data.kpi.anomalyTypeStats).forEach(([type, count]) => {
+      summaryData.push({ '指标': type, '数值': formatNumber(count), '环比': data.kpi.totalAnomalies > 0 ? formatPercent(count / data.kpi.totalAnomalies) : '0%' });
+    });
+  }
+
+  const topSections: Array<{ title: string; data: Array<{ name: string; surgeryCount: number; archiveRate: number }> | undefined }> = [
+    { title: '科室 TOP3', data: data.kpi.topDepartments },
+    { title: '手术间 TOP3', data: data.kpi.topOperatingRooms },
+    { title: '设备 TOP3', data: data.kpi.topEquipments },
+    { title: '术者 TOP3', data: data.kpi.topSurgeons },
   ];
+
+  topSections.forEach((section) => {
+    if (section.data && section.data.length > 0) {
+      summaryData.push({});
+      summaryData.push({ '指标': `—— ${section.title} ——`, '数值': '手术台次', '环比': '归档率' });
+      section.data.forEach((item, idx) => {
+        summaryData.push({
+          '指标': `${idx + 1}. ${item.name}`,
+          '数值': formatNumber(item.surgeryCount),
+          '环比': formatPercent(item.archiveRate),
+        });
+      });
+    }
+  });
+
   const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-  summarySheet['!cols'] = [{ wch: 20 }, { wch: 20 }];
+  summarySheet['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 20 }];
   XLSX.utils.book_append_sheet(workbook, summarySheet, '概览');
 
   if (data.surgeries.length > 0) {
-    const surgerySheetData = data.surgeries.map((s) => ({
-      '手术ID': s.surgeryId,
-      '患者姓名': s.patient?.name || '',
-      '手术名称': s.surgeryName,
-      '科室': s.department,
-      '主刀医生': s.surgeon,
-      '手术时间': formatDateTime(s.startTime),
-      '归档状态': getArchiveStatusInfo(s.archiveStatus).label,
-    }));
+    const surgerySheetData = data.surgeries.map((s) => {
+      const imageCount = s.archiveItems.filter((i) => i.itemType === 'image').length;
+      const videoCount = s.archiveItems.filter((i) => i.itemType === 'video').length;
+      const reportCount = s.archiveItems.filter((i) => i.itemType === 'report').length;
+      let archiveDurationHours = '';
+      if (s.endTime && s.archiveTime) {
+        const end = new Date(s.endTime).getTime();
+        const arch = new Date(s.archiveTime).getTime();
+        const hours = (arch - end) / (1000 * 60 * 60);
+        archiveDurationHours = hours.toFixed(2);
+      }
+      return {
+        '手术ID': s.surgeryId,
+        '患者姓名': s.patient?.name || '',
+        '性别': s.patient?.gender || '',
+        '年龄': s.patient?.age || '',
+        '手术名称': s.surgeryName,
+        '术式': s.procedureName,
+        '科室': s.department,
+        '手术间': s.operatingRoom,
+        '设备': s.equipment,
+        '术者': s.surgeon,
+        '助手': s.assistant,
+        '手术开始时间': formatDateTime(s.startTime),
+        '手术结束时间': formatDateTime(s.endTime),
+        '归档时间': s.archiveTime ? formatDateTime(s.archiveTime) : '-',
+        '归档耗时(小时)': archiveDurationHours || '-',
+        '归档状态': getArchiveStatusInfo(s.archiveStatus).label,
+        '归档项总数': s.archiveItems.length,
+        '图像数': imageCount,
+        '视频数': videoCount,
+        '报告数': reportCount,
+      };
+    });
     const surgerySheet = XLSX.utils.json_to_sheet(surgerySheetData);
-    surgerySheet['!cols'] = [{ wch: 15 }, { wch: 12 }, { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 12 }];
+    surgerySheet['!cols'] = [
+      { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 25 },
+      { wch: 20 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 12 },
+      { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 14 },
+      { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+    ];
     XLSX.utils.book_append_sheet(workbook, surgerySheet, '手术清单');
   }
 
   if (data.anomalies.length > 0) {
-    const anomalySheetData = data.anomalies.map((a) => ({
-      '异常ID': a.anomalyId,
-      '患者姓名': a.surgery?.patient?.name || '',
-      '手术名称': a.surgery?.surgeryName || '',
-      '异常类型': getAnomalyTypeInfo(a.anomalyType).label,
-      '异常描述': a.description,
-      '发现时间': formatDateTime(a.discoverTime),
-      '状态': getAnomalyStatusInfo(a.status).label,
-      '整改负责人': a.assignee || '-',
-    }));
+    const anomalySheetData = data.anomalies.map((a) => {
+      const timelineBrief = a.rectificationTimeline
+        .map((r) => `[${formatDate(r.operateTime)}]${r.action}(${r.operator})`)
+        .join(' → ');
+      return {
+        '手术ID': a.surgery?.surgeryId || '',
+        '患者姓名': a.surgery?.patient?.name || '',
+        '性别': a.surgery?.patient?.gender || '',
+        '年龄': a.surgery?.patient?.age || '',
+        '手术名称': a.surgery?.surgeryName || '',
+        '术式': a.surgery?.procedureName || '',
+        '科室': a.surgery?.department || '',
+        '手术间': a.surgery?.operatingRoom || '',
+        '设备': a.surgery?.equipment || '',
+        '术者': a.surgery?.surgeon || '',
+        '异常类型': getAnomalyTypeInfo(a.anomalyType).label,
+        '异常描述': a.description,
+        '发现时间': formatDateTime(a.discoverTime),
+        '状态': getAnomalyStatusInfo(a.status).label,
+        '整改负责人': a.assignee || '-',
+        '整改期限': a.deadline ? formatDate(a.deadline) : '-',
+        '整改结果': a.rectificationResult || '-',
+        '复核人': a.reviewer || '-',
+        '复核意见': a.reviewOpinion || '-',
+        '整改时间线简述': timelineBrief || '-',
+      };
+    });
     const anomalySheet = XLSX.utils.json_to_sheet(anomalySheetData);
-    anomalySheet['!cols'] = [{ wch: 15 }, { wch: 12 }, { wch: 25 }, { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 12 }, { wch: 12 }];
+    anomalySheet['!cols'] = [
+      { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 25 },
+      { wch: 20 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 12 },
+      { wch: 15 }, { wch: 35 }, { wch: 20 }, { wch: 12 }, { wch: 12 },
+      { wch: 12 }, { wch: 25 }, { wch: 12 }, { wch: 25 }, { wch: 45 },
+    ];
     XLSX.utils.book_append_sheet(workbook, anomalySheet, '异常清单');
   }
 
   if (data.statistics.length > 0) {
-    const statSheetData = data.statistics.map((s) => ({
-      '统计日期': formatDate(s.statDate),
-      '维度': s.dimension,
-      '维度值': s.dimensionValue,
-      '手术台次': formatNumber(s.surgeryCount),
-      '已归档数': formatNumber(s.archivedCount),
-      '异常数': formatNumber(s.anomalyCount),
-      '归档率': formatPercent(s.archiveRate),
-      '异常率': formatPercent(s.anomalyRate),
-    }));
+    const dimensions: Array<{ key: StatisticData['dimension']; title: string }> = [
+      { key: 'department', title: '科室维度统计' },
+      { key: 'operatingRoom', title: '手术间维度统计' },
+      { key: 'equipment', title: '设备维度统计' },
+      { key: 'surgeon', title: '术者维度统计' },
+    ];
+
+    const statSheetData: Array<Record<string, string | number>> = [];
+
+    dimensions.forEach((dim) => {
+      const dimData = data.statistics.filter((s) => s.dimension === dim.key);
+      if (dimData.length === 0) return;
+
+      const aggregated: Record<string, {
+        surgeryCount: number;
+        archivedCount: number;
+        anomalyCount: number;
+      }> = {};
+      dimData.forEach((item) => {
+        if (!aggregated[item.dimensionValue]) {
+          aggregated[item.dimensionValue] = { surgeryCount: 0, archivedCount: 0, anomalyCount: 0 };
+        }
+        aggregated[item.dimensionValue].surgeryCount += item.surgeryCount;
+        aggregated[item.dimensionValue].archivedCount += item.archivedCount;
+        aggregated[item.dimensionValue].anomalyCount += item.anomalyCount;
+      });
+
+      statSheetData.push({ '维度标题': dim.title, '维度值': '', '手术台次': '', '已归档数': '', '异常数': '', '归档率': '', '异常率': '' });
+      statSheetData.push({ '维度标题': '维度', '维度值': '维度值', '手术台次': '手术台次', '已归档数': '已归档数', '异常数': '异常数', '归档率': '归档率', '异常率': '异常率' });
+
+      Object.entries(aggregated)
+        .sort((a, b) => b[1].surgeryCount - a[1].surgeryCount)
+        .forEach(([dimensionValue, data]) => {
+          statSheetData.push({
+            '维度标题': dim.key,
+            '维度值': dimensionValue,
+            '手术台次': formatNumber(data.surgeryCount),
+            '已归档数': formatNumber(data.archivedCount),
+            '异常数': formatNumber(data.anomalyCount),
+            '归档率': formatPercent(data.surgeryCount > 0 ? data.archivedCount / data.surgeryCount : 0),
+            '异常率': formatPercent(data.surgeryCount > 0 ? data.anomalyCount / data.surgeryCount : 0),
+          });
+        });
+
+      statSheetData.push({});
+    });
+
     const statSheet = XLSX.utils.json_to_sheet(statSheetData);
-    statSheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    statSheet['!cols'] = [
+      { wch: 20 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+    ];
     XLSX.utils.book_append_sheet(workbook, statSheet, '统计数据');
   }
 

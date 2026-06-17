@@ -32,7 +32,7 @@ import Tag from '@/components/ui/Tag';
 import { useSurgeryStore } from '@/store/useSurgeryStore';
 import { useAnomalyStore } from '@/store/useAnomalyStore';
 import { useAppStore } from '@/store/useAppStore';
-import type { ArchiveItem, ItemType, ItemStatus } from '@/types';
+import type { ArchiveItem, ItemType, ItemStatus, Anomaly } from '@/types';
 import { formatDateTime } from '@/utils/dateUtils';
 import { cn } from '@/lib/utils';
 
@@ -59,8 +59,8 @@ interface ChecklistGroup {
 export default function SurgeryDetailPage() {
   const { surgeryId } = useParams<{ surgeryId: string }>();
   const navigate = useNavigate();
-  const { selectedSurgery, fetchSurgeryById, loading } = useSurgeryStore();
-  const { submitRectification } = useAnomalyStore();
+  const { selectedSurgery, fetchSurgeryById, loading, clearSelectedSurgery } = useSurgeryStore();
+  const { submitRectification, anomalies } = useAnomalyStore();
   const { addNotification } = useAppStore();
   const [expandedGroups, setExpandedGroups] = useState<Record<ItemType, boolean>>({
     image: true,
@@ -68,13 +68,29 @@ export default function SurgeryDetailPage() {
     report: true,
   });
   const [rectificationResult, setRectificationResult] = useState('');
+  const [attachmentName, setAttachmentName] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     if (surgeryId) {
+      clearSelectedSurgery();
       fetchSurgeryById(surgeryId);
     }
-  }, [surgeryId, fetchSurgeryById]);
+    return () => {
+      clearSelectedSurgery();
+    };
+  }, [surgeryId, fetchSurgeryById, clearSelectedSurgery]);
+
+  const currentAnomaly = useMemo<Anomaly | undefined>(() => {
+    if (selectedSurgery?.anomalies && selectedSurgery.anomalies.length > 0) {
+      return selectedSurgery.anomalies[0];
+    }
+    if (surgeryId) {
+      return anomalies.find((a) => a.surgeryId === surgeryId);
+    }
+    return undefined;
+  }, [selectedSurgery, anomalies, surgeryId]);
 
   const archiveItemsByType = useMemo(() => {
     const result: Record<ItemType, ArchiveItem[]> = {
@@ -103,7 +119,7 @@ export default function SurgeryDetailPage() {
   }, [archiveItemsByType]);
 
   const timelineItems = useMemo<TimelineItem[]>(() => {
-    const anomaly = selectedSurgery?.anomalies?.[0];
+    const anomaly = currentAnomaly;
     if (!anomaly?.rectificationTimeline?.length) return [];
 
     const iconMap: Record<string, { icon: typeof AlertCircle; color: string; bgColor: string }> = {
@@ -132,10 +148,10 @@ export default function SurgeryDetailPage() {
         description: record.remark,
       };
     });
-  }, [selectedSurgery]);
+  }, [currentAnomaly]);
 
-  const isAnomaly = selectedSurgery?.archiveStatus === 'anomaly';
-  const anomaly = selectedSurgery?.anomalies?.[0];
+  const isAnomaly = selectedSurgery?.archiveStatus === 'anomaly' || !!currentAnomaly;
+  const anomaly = currentAnomaly;
   const canRectify = isAnomaly && anomaly && ['assigned', 'rectifying'].includes(anomaly.status);
 
   const toggleGroup = (type: ItemType) => {
@@ -144,18 +160,29 @@ export default function SurgeryDetailPage() {
 
   const handleSubmitRectification = async () => {
     if (!anomaly || !rectificationResult.trim()) return;
+    setShowConfirm(true);
+  };
+
+  const confirmSubmitRectification = async () => {
+    if (!anomaly || !rectificationResult.trim()) return;
+    setShowConfirm(false);
     setSubmitting(true);
     try {
       submitRectification({
         anomalyId: anomaly.anomalyId,
         result: rectificationResult.trim(),
+        attachmentUrl: attachmentName || undefined,
       });
       addNotification({
         type: 'success',
         title: '提交成功',
-        message: '整改结果已提交，等待复核',
+        message: '整改结果已提交，状态已转为复核中',
       });
       setRectificationResult('');
+      setAttachmentName('');
+      if (surgeryId) {
+        fetchSurgeryById(surgeryId);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -167,7 +194,15 @@ export default function SurgeryDetailPage() {
 
   if (loading && !selectedSurgery) {
     return (
-      <PageContainer title="手术抽查详情" breadcrumbs={[{ label: '首页' }, { label: '手术抽查详情' }]}>
+      <PageContainer 
+        title="手术抽查详情" 
+        breadcrumbs={[{ label: '首页' }, { label: '手术抽查详情' }]}
+        actions={
+          <Button variant="ghost" leftIcon={<ArrowLeft className="w-4 h-4" />} onClick={handleBack}>
+            返回
+          </Button>
+        }
+      >
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin w-8 h-8 border-4 border-medical-primary border-t-transparent rounded-full" />
         </div>
@@ -177,8 +212,20 @@ export default function SurgeryDetailPage() {
 
   if (!selectedSurgery) {
     return (
-      <PageContainer title="手术抽查详情" breadcrumbs={[{ label: '首页' }, { label: '手术抽查详情' }]}>
-        <div className="flex items-center justify-center h-64 text-text-tertiary">未找到手术信息</div>
+      <PageContainer 
+        title="手术抽查详情" 
+        breadcrumbs={[{ label: '首页' }, { label: '手术抽查详情' }]}
+        actions={
+          <Button variant="ghost" leftIcon={<ArrowLeft className="w-4 h-4" />} onClick={handleBack}>
+            返回
+          </Button>
+        }
+      >
+        <div className="flex flex-col items-center justify-center h-64 text-text-tertiary">
+          <FileImage className="w-16 h-16 mb-4 text-text-tertiary/50" />
+          <div className="text-lg font-medium mb-2">未找到该手术信息</div>
+          <div className="text-sm">该手术可能不存在或已被删除</div>
+        </div>
       </PageContainer>
     );
   }
@@ -467,14 +514,18 @@ export default function SurgeryDetailPage() {
           </CardContent>
         </Card>
 
-        {timelineItems.length > 0 && (
+        {(anomaly || timelineItems.length > 0) && (
           <Card>
             <CardHeader>
               <CardTitle>整改记录</CardTitle>
               {anomaly && <StatusBadge status={anomaly.status} />}
             </CardHeader>
             <CardContent>
-              <Timeline items={timelineItems} />
+              {timelineItems.length > 0 ? (
+                <Timeline items={timelineItems} />
+              ) : (
+                <div className="text-center py-8 text-text-tertiary text-sm">暂无整改记录</div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -499,14 +550,25 @@ export default function SurgeryDetailPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-text-primary mb-2">上传整改凭证</label>
-                  <div className="border-2 border-dashed border-border-default rounded-lg p-8 text-center hover:border-medical-primary hover:bg-medical-primary-light/30 transition-colors cursor-pointer">
-                    <Upload className="w-8 h-8 text-text-tertiary mx-auto mb-2" />
-                    <p className="text-sm text-text-secondary">点击或拖拽文件到此处上传</p>
-                    <p className="text-xs text-text-tertiary mt-1">支持图片、PDF 等格式，单个文件不超过 20MB</p>
+                  <div className="space-y-2">
+                    <div className="border-2 border-dashed border-border-default rounded-lg p-8 text-center hover:border-medical-primary hover:bg-medical-primary-light/30 transition-colors cursor-pointer">
+                      <Upload className="w-8 h-8 text-text-tertiary mx-auto mb-2" />
+                      <p className="text-sm text-text-secondary">点击或拖拽文件到此处上传</p>
+                      <p className="text-xs text-text-tertiary mt-1">支持图片、PDF 等格式，单个文件不超过 20MB</p>
+                    </div>
+                    <Input
+                      placeholder="模拟文件名（如：整改凭证.pdf）"
+                      value={attachmentName}
+                      onChange={(e) => setAttachmentName(e.target.value)}
+                      prefixIcon={<FileImage className="w-4 h-4" />}
+                    />
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-3 pt-2">
-                  <Button variant="secondary" onClick={() => setRectificationResult('')}>
+                  <Button variant="secondary" onClick={() => {
+                    setRectificationResult('');
+                    setAttachmentName('');
+                  }}>
                     重置
                   </Button>
                   <Button
@@ -524,6 +586,39 @@ export default function SurgeryDetailPage() {
           </Card>
         )}
       </div>
+
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="px-6 py-4 border-b border-border-light">
+              <h3 className="text-lg font-semibold text-text-primary">确认提交整改</h3>
+            </div>
+            <div className="px-6 py-4">
+              <div className="flex items-start gap-3 p-4 bg-medical-warning-light/50 rounded-lg border border-medical-warning/20">
+                <AlertCircle className="w-5 h-5 text-medical-warning flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary">提交后状态将转为复核中</p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    确认已完成所有整改工作，并上传了相关凭证。提交后将无法修改，等待质控人员复核。
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => setShowConfirm(false)} disabled={submitting}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                onClick={confirmSubmitRectification}
+                loading={submitting}
+              >
+                确认提交
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageContainer>
   );
 }

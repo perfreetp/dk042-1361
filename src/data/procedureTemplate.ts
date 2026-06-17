@@ -12,6 +12,7 @@ const procedureTemplates: ProcedureTemplate[] = rawTemplates.map((t) => ({
     itemName: r.name,
     itemType: r.category as ItemType,
     description: r.description || '',
+    isRequired: r.required,
   })) as RequiredItem[],
 }))
 

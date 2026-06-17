@@ -9,7 +9,46 @@ import type {
   Notification,
   ProcedureTemplate,
   RectificationRecord,
+  StatDimension,
 } from '../types';
+
+type RandomFn = () => number;
+
+export function seededRandom(seed: number): RandomFn {
+  let s = seed >>> 0;
+  return function (): number {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function createRandomUtils(rand: RandomFn) {
+  function randomFrom<T>(arr: readonly T[]): T {
+    return arr[Math.floor(rand() * arr.length)];
+  }
+
+  function randomInt(min: number, max: number): number {
+    return Math.floor(rand() * (max - min + 1)) + min;
+  }
+
+  function randomDate(daysAgo: number): string {
+    const date = new Date(2026, 5, 17);
+    date.setDate(date.getDate() - Math.floor(rand() * daysAgo));
+    date.setHours(randomInt(8, 18), randomInt(0, 59), 0, 0);
+    return date.toISOString();
+  }
+
+  let idCounter = 0;
+  function randomId(prefix: string): string {
+    idCounter++;
+    return `${prefix}${10000 + idCounter}`;
+  }
+
+  return { randomFrom, randomInt, randomDate, randomId };
+}
 
 const departments = ['心血管内科', '神经外科', '骨科', '普外科', '泌尿外科', '妇产科', '消化内科', '呼吸内科'];
 const procedures = [
@@ -25,127 +64,8 @@ const procedures = [
 const surgeons = ['张伟', '李明', '王芳', '赵强', '刘洋', '陈静', '杨帆', '黄磊'];
 const operatingRooms = ['DSA-1', 'DSA-2', 'DSA-3', 'DSA-4', '杂交手术室'];
 const equipments = ['飞利浦Azurion 7', '西门子Artis zee', 'GE Innova IGS 5', '东芝Infinix'];
-
-function randomFrom<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function randomDate(daysAgo: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() - Math.floor(Math.random() * daysAgo));
-  date.setHours(randomInt(8, 18), randomInt(0, 59), 0, 0);
-  return date.toISOString();
-}
-
-function randomId(prefix: string): string {
-  return `${prefix}${Date.now()}${randomInt(1000, 9999)}`;
-}
-
 const surname = ['张', '李', '王', '刘', '陈', '杨', '赵', '黄', '周', '吴'];
 const givenName = ['伟', '芳', '娜', '敏', '静', '丽', '强', '磊', '洋', '艳', '勇', '军', '杰', '娟', '涛'];
-
-function generatePatient(): Patient {
-  return {
-    patientId: randomId('P'),
-    name: `${randomFrom(surname)}${randomFrom(givenName)}`,
-    gender: randomFrom(['男', '女'] as const),
-    age: randomInt(18, 85),
-    idCard: `3${randomInt(100000, 999999)}${randomInt(1950, 2005)}${randomInt(101, 1231)}${randomInt(1000, 9999)}`,
-    medicalRecordNo: `MR${randomInt(100000, 999999)}`,
-  };
-}
-
-function generateArchiveItems(surgeryId: string): ArchiveItem[] {
-  const items: ArchiveItem[] = [];
-  const imageCount = randomInt(5, 15);
-  for (let i = 0; i < imageCount; i++) {
-    const status = Math.random() > 0.15 ? 'archived' : (Math.random() > 0.5 ? 'missing' : 'mismatch');
-    items.push({
-      itemId: randomId('IMG'),
-      surgeryId,
-      itemType: 'image',
-      itemName: `术中影像_${i + 1}`,
-      thumbnailUrl: status === 'archived' ? `/mock/images/${randomInt(1, 10)}.jpg` : undefined,
-      itemUrl: status === 'archived' ? `/mock/files/image_${i + 1}.dcm` : undefined,
-      isRequired: i < 3,
-      status,
-      uploadTime: status === 'archived' ? randomDate(7) : undefined,
-    });
-  }
-  const videoCount = randomInt(1, 3);
-  for (let i = 0; i < videoCount; i++) {
-    const status = Math.random() > 0.2 ? 'archived' : 'missing';
-    items.push({
-      itemId: randomId('VID'),
-      surgeryId,
-      itemType: 'video',
-      itemName: `手术视频_${i + 1}`,
-      itemUrl: status === 'archived' ? `/mock/files/video_${i + 1}.mp4` : undefined,
-      isRequired: true,
-      status,
-      uploadTime: status === 'archived' ? randomDate(7) : undefined,
-    });
-  }
-  const reportStatus = Math.random() > 0.1 ? 'archived' : 'missing';
-  items.push({
-    itemId: randomId('RPT'),
-    surgeryId,
-    itemType: 'report',
-    itemName: '手术报告',
-    itemUrl: reportStatus === 'archived' ? `/mock/files/report.pdf` : undefined,
-    isRequired: true,
-    status: reportStatus,
-    uploadTime: reportStatus === 'archived' ? randomDate(7) : undefined,
-  });
-  return items;
-}
-
-function generateRectificationRecords(anomalyId: string): RectificationRecord[] {
-  const records: RectificationRecord[] = [];
-  records.push({
-    recordId: randomId('REC'),
-    anomalyId,
-    action: '发现异常',
-    operator: '质控系统',
-    operateTime: randomDate(7),
-  });
-  if (Math.random() > 0.4) {
-    records.push({
-      recordId: randomId('REC'),
-      anomalyId,
-      action: '分派整改',
-      operator: randomFrom(surgeons),
-      operateTime: randomDate(5),
-      remark: '请在3个工作日内完成整改',
-    });
-  }
-  if (Math.random() > 0.6) {
-    records.push({
-      recordId: randomId('REC'),
-      anomalyId,
-      action: '提交整改',
-      operator: randomFrom(surgeons),
-      operateTime: randomDate(3),
-      remark: '已补充缺失资料，请复核',
-      attachmentUrl: '/mock/files/rectification.pdf',
-    });
-  }
-  if (Math.random() > 0.7) {
-    records.push({
-      recordId: randomId('REC'),
-      anomalyId,
-      action: '复核通过',
-      operator: randomFrom(surgeons),
-      operateTime: randomDate(2),
-      remark: '整改合格，关闭异常',
-    });
-  }
-  return records;
-}
 
 const anomalyTypeMap: Record<string, { type: Anomaly['anomalyType']; name: string }> = {
   overdue: { type: 'overdue', name: '超时归档' },
@@ -163,38 +83,140 @@ const anomalyStatusMap: Record<string, { status: Anomaly['status']; name: string
   rejected: { status: 'rejected', name: '已驳回' },
 };
 
-function generateAnomalies(surgery: Surgery): Anomaly[] {
-  const anomalies: Anomaly[] = [];
-  const anomalyCount = surgery.archiveStatus === 'anomaly' ? randomInt(1, 3) : 0;
-  for (let i = 0; i < anomalyCount; i++) {
-    const typeKey = randomFrom(['overdue', 'missing', 'mismatch', 'duplicate']);
-    const anomalyType = anomalyTypeMap[typeKey];
-    const statusKeys = ['pending', 'assigned', 'rectifying', 'reviewing', 'closed', 'rejected'];
-    const statusKey = randomFrom(statusKeys);
-    const anomalyStatus = anomalyStatusMap[statusKey];
-    const anomalyId = randomId('AN');
-    anomalies.push({
-      anomalyId,
-      surgeryId: surgery.surgeryId,
-      surgery,
-      anomalyType: anomalyType.type,
-      anomalyTypeName: anomalyType.name,
-      description: `${anomalyType.name}：请及时处理`,
-      discoverTime: randomDate(7),
-      status: anomalyStatus.status,
-      statusName: anomalyStatus.name,
-      assignee: statusKey !== 'pending' ? randomFrom(surgeons) : undefined,
-      deadline: statusKey !== 'pending' && statusKey !== 'closed' ? randomDate(-7) : undefined,
-      rectificationResult: ['rectifying', 'reviewing', 'closed'].includes(statusKey) ? '已补充相关归档资料' : undefined,
-      reviewOpinion: statusKey === 'closed' ? '整改合格' : statusKey === 'rejected' ? '整改不完整，请重新提交' : undefined,
-      reviewer: ['closed', 'rejected'].includes(statusKey) ? randomFrom(surgeons) : undefined,
-      rectificationTimeline: generateRectificationRecords(anomalyId),
-    });
-  }
-  return anomalies;
-}
+export function generateSurgeries(count: number = 50, seed: number = 42): Surgery[] {
+  const rand = seededRandom(seed);
+  const { randomFrom, randomInt, randomDate, randomId } = createRandomUtils(rand);
 
-export function generateSurgeries(count: number = 50): Surgery[] {
+  function generatePatient(): Patient {
+    return {
+      patientId: randomId('P'),
+      name: `${randomFrom(surname)}${randomFrom(givenName)}`,
+      gender: randomFrom(['男', '女'] as const),
+      age: randomInt(18, 85),
+      idCard: `3${randomInt(100000, 999999)}${randomInt(1950, 2005)}${randomInt(101, 1231)}${randomInt(1000, 9999)}`,
+      medicalRecordNo: `MR${randomInt(100000, 999999)}`,
+    };
+  }
+
+  function generateArchiveItems(surgeryId: string): ArchiveItem[] {
+    const items: ArchiveItem[] = [];
+    const imageCount = randomInt(5, 15);
+    for (let i = 0; i < imageCount; i++) {
+      const status = rand() > 0.15 ? 'archived' : (rand() > 0.5 ? 'missing' : 'mismatch');
+      items.push({
+        itemId: randomId('IMG'),
+        surgeryId,
+        itemType: 'image',
+        itemName: `术中影像_${i + 1}`,
+        thumbnailUrl: status === 'archived' ? `/mock/images/${randomInt(1, 10)}.jpg` : undefined,
+        itemUrl: status === 'archived' ? `/mock/files/image_${i + 1}.dcm` : undefined,
+        isRequired: i < 3,
+        status,
+        uploadTime: status === 'archived' ? randomDate(7) : undefined,
+      });
+    }
+    const videoCount = randomInt(1, 3);
+    for (let i = 0; i < videoCount; i++) {
+      const status = rand() > 0.2 ? 'archived' : 'missing';
+      items.push({
+        itemId: randomId('VID'),
+        surgeryId,
+        itemType: 'video',
+        itemName: `手术视频_${i + 1}`,
+        itemUrl: status === 'archived' ? `/mock/files/video_${i + 1}.mp4` : undefined,
+        isRequired: true,
+        status,
+        uploadTime: status === 'archived' ? randomDate(7) : undefined,
+      });
+    }
+    const reportStatus = rand() > 0.1 ? 'archived' : 'missing';
+    items.push({
+      itemId: randomId('RPT'),
+      surgeryId,
+      itemType: 'report',
+      itemName: '手术报告',
+      itemUrl: reportStatus === 'archived' ? `/mock/files/report.pdf` : undefined,
+      isRequired: true,
+      status: reportStatus,
+      uploadTime: reportStatus === 'archived' ? randomDate(7) : undefined,
+    });
+    return items;
+  }
+
+  function generateRectificationRecords(anomalyId: string): RectificationRecord[] {
+    const records: RectificationRecord[] = [];
+    records.push({
+      recordId: randomId('REC'),
+      anomalyId,
+      action: '发现异常',
+      operator: '质控系统',
+      operateTime: randomDate(7),
+    });
+    if (rand() > 0.4) {
+      records.push({
+        recordId: randomId('REC'),
+        anomalyId,
+        action: '分派整改',
+        operator: randomFrom(surgeons),
+        operateTime: randomDate(5),
+        remark: '请在3个工作日内完成整改',
+      });
+    }
+    if (rand() > 0.6) {
+      records.push({
+        recordId: randomId('REC'),
+        anomalyId,
+        action: '提交整改',
+        operator: randomFrom(surgeons),
+        operateTime: randomDate(3),
+        remark: '已补充缺失资料，请复核',
+        attachmentUrl: '/mock/files/rectification.pdf',
+      });
+    }
+    if (rand() > 0.7) {
+      records.push({
+        recordId: randomId('REC'),
+        anomalyId,
+        action: '复核通过',
+        operator: randomFrom(surgeons),
+        operateTime: randomDate(2),
+        remark: '整改合格，关闭异常',
+      });
+    }
+    return records;
+  }
+
+  function generateAnomalies(surgery: Surgery): Anomaly[] {
+    const anomalies: Anomaly[] = [];
+    const anomalyCount = surgery.archiveStatus === 'anomaly' ? randomInt(1, 3) : 0;
+    for (let i = 0; i < anomalyCount; i++) {
+      const typeKey = randomFrom(['overdue', 'missing', 'mismatch', 'duplicate']);
+      const anomalyType = anomalyTypeMap[typeKey];
+      const statusKeys = ['pending', 'assigned', 'rectifying', 'reviewing', 'closed', 'rejected'];
+      const statusKey = randomFrom(statusKeys);
+      const anomalyStatus = anomalyStatusMap[statusKey];
+      const anomalyId = randomId('AN');
+      anomalies.push({
+        anomalyId,
+        surgeryId: surgery.surgeryId,
+        surgery,
+        anomalyType: anomalyType.type,
+        anomalyTypeName: anomalyType.name,
+        description: `${anomalyType.name}：请及时处理`,
+        discoverTime: randomDate(7),
+        status: anomalyStatus.status,
+        statusName: anomalyStatus.name,
+        assignee: statusKey !== 'pending' ? randomFrom(surgeons) : undefined,
+        deadline: statusKey !== 'pending' && statusKey !== 'closed' ? randomDate(-7) : undefined,
+        rectificationResult: ['rectifying', 'reviewing', 'closed'].includes(statusKey) ? '已补充相关归档资料' : undefined,
+        reviewOpinion: statusKey === 'closed' ? '整改合格' : statusKey === 'rejected' ? '整改不完整，请重新提交' : undefined,
+        reviewer: ['closed', 'rejected'].includes(statusKey) ? randomFrom(surgeons) : undefined,
+        rectificationTimeline: generateRectificationRecords(anomalyId),
+      });
+    }
+    return anomalies;
+  }
+
   const surgeries: Surgery[] = [];
   for (let i = 0; i < count; i++) {
     const patient = generatePatient();
@@ -233,17 +255,19 @@ export function generateSurgeries(count: number = 50): Surgery[] {
   return surgeries;
 }
 
-export function generateStatisticData(): StatisticData[] {
+export function generateStatisticData(seed: number = 42): StatisticData[] {
+  const rand = seededRandom(seed + 1000);
+  const { randomInt } = createRandomUtils(rand);
   const data: StatisticData[] = [];
-  const dimensions: Array<{ key: StatisticData['dimension']; values: string[] }> = [
+  const dimensions: Array<{ key: StatDimension; values: string[] }> = [
     { key: 'department', values: departments },
     { key: 'operatingRoom', values: operatingRooms },
     { key: 'equipment', values: equipments },
     { key: 'surgeon', values: surgeons },
   ];
-  const today = new Date();
+  const baseDate = new Date(2026, 5, 17);
   for (let d = 29; d >= 0; d--) {
-    const statDate = new Date(today);
+    const statDate = new Date(baseDate);
     statDate.setDate(statDate.getDate() - d);
     const dateStr = statDate.toISOString().split('T')[0];
     for (const dim of dimensions) {
@@ -267,19 +291,53 @@ export function generateStatisticData(): StatisticData[] {
   return data;
 }
 
-export function generateKPIData(): KPIData {
+export function generateKPIData(seed: number = 42): KPIData {
+  const rand = seededRandom(seed + 2000);
+  const { randomInt, randomFrom } = createRandomUtils(rand);
   const totalSurgeries = randomInt(200, 500);
-  const archivedSurgeries = Math.floor(totalSurgeries * (0.75 + Math.random() * 0.2));
+  const archivedSurgeries = Math.floor(totalSurgeries * (0.75 + rand() * 0.2));
+
+  const anomalyTypeStats: Record<string, number> = {};
+  const anomalyTypes = ['超时归档', '资料缺项', '患者信息不一致', '重复归档'];
+  let remaining = randomInt(10, 60);
+  anomalyTypes.forEach((type, idx) => {
+    if (idx === anomalyTypes.length - 1) {
+      anomalyTypeStats[type] = remaining;
+    } else {
+      const count = Math.max(1, Math.floor(remaining * rand()));
+      anomalyTypeStats[type] = count;
+      remaining -= count;
+    }
+  });
+  const totalAnomalies = Object.values(anomalyTypeStats).reduce((a, b) => a + b, 0);
+
+  function generateTopN(values: readonly string[], n: number) {
+    const shuffled = [...values].sort(() => rand() - 0.5).slice(0, n);
+    const result = shuffled
+      .map((name) => ({
+        name,
+        surgeryCount: randomInt(Math.floor(totalSurgeries / 10), Math.floor(totalSurgeries / 3)),
+        archiveRate: +(0.7 + rand() * 0.25).toFixed(4),
+      }))
+      .sort((a, b) => b.surgeryCount - a.surgeryCount);
+    return result;
+  }
+
   return {
     totalSurgeries,
     archivedSurgeries,
     archiveRate: +(archivedSurgeries / totalSurgeries).toFixed(4),
-    totalAnomalies: randomInt(10, 60),
+    totalAnomalies,
     compareLastPeriod: {
-      surgeries: +((Math.random() - 0.5) * 20).toFixed(1),
-      archiveRate: +((Math.random() - 0.5) * 10).toFixed(2),
-      anomalies: +((Math.random() - 0.5) * 30).toFixed(1),
+      surgeries: +((rand() - 0.5) * 20).toFixed(1),
+      archiveRate: +((rand() - 0.5) * 10).toFixed(2),
+      anomalies: +((rand() - 0.5) * 30).toFixed(1),
     },
+    anomalyTypeStats,
+    topDepartments: generateTopN(departments, 3),
+    topOperatingRooms: generateTopN(operatingRooms, 3),
+    topEquipments: generateTopN(equipments, 3),
+    topSurgeons: generateTopN(surgeons, 3),
   };
 }
 
@@ -291,7 +349,9 @@ export const mockUser: User = {
   department: '心血管内科',
 };
 
-export function generateNotifications(): Notification[] {
+export function generateNotifications(seed: number = 42): Notification[] {
+  const rand = seededRandom(seed + 3000);
+  const { randomDate, randomId } = createRandomUtils(rand);
   return [
     {
       id: randomId('N'),
@@ -328,18 +388,26 @@ export function generateNotifications(): Notification[] {
   ];
 }
 
-export function generateProcedureTemplates(): ProcedureTemplate[] {
+export function generateProcedureTemplates(seed: number = 42): ProcedureTemplate[] {
+  const rand = seededRandom(seed + 4000);
+  const { randomId } = createRandomUtils(rand);
   return procedures.map(proc => ({
     templateId: randomId('TPL'),
     procedureCode: proc.code,
     procedureName: proc.name,
     requiredItems: [
-      { itemId: randomId('REQ'), itemName: '术前定位影像', itemType: 'image', description: '术前标准体位定位影像' },
-      { itemId: randomId('REQ'), itemName: '术中关键步骤影像', itemType: 'image', description: '至少5张术中关键步骤图片' },
-      { itemId: randomId('REQ'), itemName: '手术全程视频', itemType: 'video', description: '完整手术操作视频' },
-      { itemId: randomId('REQ'), itemName: '手术报告', itemType: 'report', description: '经医师签字的手术报告' },
+      { itemId: randomId('REQ'), itemName: '术前定位影像', itemType: 'image', description: '术前标准体位定位影像', isRequired: true },
+      { itemId: randomId('REQ'), itemName: '术中关键步骤影像', itemType: 'image', description: '至少5张术中关键步骤图片', isRequired: true },
+      { itemId: randomId('REQ'), itemName: '手术全程视频', itemType: 'video', description: '完整手术操作视频', isRequired: true },
+      { itemId: randomId('REQ'), itemName: '手术报告', itemType: 'report', description: '经医师签字的手术报告', isRequired: true },
     ],
   }));
+}
+
+export const storedSurgeries: Surgery[] = generateSurgeries(50);
+
+export function getAllSurgeries(): Surgery[] {
+  return storedSurgeries;
 }
 
 export const mockDepartments = departments;

@@ -82,6 +82,7 @@ export interface RequiredItem {
   itemName: string;
   itemType: ItemType;
   description: string;
+  isRequired: boolean;
 }
 
 export interface ProcedureTemplate {
@@ -114,6 +115,11 @@ export interface KPIData {
     archiveRate: number;
     anomalies: number;
   };
+  anomalyTypeStats: Record<string, number>;
+  topDepartments: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+  topOperatingRooms: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+  topEquipments: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
+  topSurgeons: Array<{ name: string; surgeryCount: number; archiveRate: number }>;
 }
 
 export type TimeRangeType = 'day' | 'week' | 'month' | 'custom';

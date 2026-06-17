@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Search, Filter, Download, UserPlus, Eye, ClipboardCheck, CheckCircle2, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Filter, Download, UserPlus, Eye, ClipboardCheck, CheckCircle2, RotateCcw, ChevronDown, ChevronUp, Upload, XCircle, FileImage } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import AnomalyTag from '@/components/common/AnomalyTag';
 import StatusBadge from '@/components/common/StatusBadge';
@@ -10,6 +11,7 @@ import Select, { SelectOption } from '@/components/ui/Select';
 import Input from '@/components/ui/Input';
 import Card from '@/components/ui/Card';
 import { useAnomalyStore } from '@/store/useAnomalyStore';
+import { useAppStore } from '@/store/useAppStore';
 import { mockSurgeons } from '@/data/mockData';
 import type { Anomaly, AnomalyType, AnomalyStatus } from '@/types';
 import { formatDateTime, formatDate } from '@/utils/dateUtils';
@@ -37,6 +39,7 @@ const statusTabs: { key: AnomalyStatus | 'all'; label: string }[] = [
 const assigneeOptions: SelectOption[] = mockSurgeons.map((name) => ({ label: name, value: name }));
 
 export default function AnomaliesPage() {
+  const navigate = useNavigate();
   const {
     anomalies,
     selectedIds,
@@ -56,9 +59,12 @@ export default function AnomaliesPage() {
     clearSelection,
     assignAnomaly,
     batchAssign,
+    submitRectification,
+    reviewAnomaly,
     getTypeStats,
     getStatusStats,
   } = useAnomalyStore();
+  const { addNotification } = useAppStore();
 
   const [searchKeyword, setSearchKeyword] = useState('');
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
@@ -69,6 +75,19 @@ export default function AnomaliesPage() {
     assignee: '',
     remark: '',
     deadline: '',
+  });
+
+  const [rectifyModalOpen, setRectifyModalOpen] = useState(false);
+  const [currentRectifyId, setCurrentRectifyId] = useState<string | null>(null);
+  const [rectifyForm, setRectifyForm] = useState({
+    result: '',
+    attachmentName: '',
+  });
+
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [currentReviewId, setCurrentReviewId] = useState<string | null>(null);
+  const [reviewForm, setReviewForm] = useState({
+    opinion: '',
   });
 
   const typeStats = useMemo(() => getTypeStats(), [getTypeStats]);
@@ -108,6 +127,11 @@ export default function AnomaliesPage() {
     if (!assignForm.assignee || !assignForm.deadline) return;
     if (isBatchAssign) {
       batchAssign(selectedIds, assignForm.assignee as string, assignForm.deadline, assignForm.remark);
+      addNotification({
+        type: 'success',
+        title: '批量分派成功',
+        message: `已将 ${selectedIds.length} 条异常分派给 ${assignForm.assignee}`,
+      });
     } else if (currentAssignId) {
       assignAnomaly({
         anomalyId: currentAssignId,
@@ -115,8 +139,58 @@ export default function AnomaliesPage() {
         deadline: assignForm.deadline,
         remark: assignForm.remark,
       });
+      addNotification({
+        type: 'success',
+        title: '分派成功',
+        message: `异常已分派给 ${assignForm.assignee}`,
+      });
     }
     setAssignModalOpen(false);
+    fetchAnomalies();
+  };
+
+  const openRectify = (id: string) => {
+    setCurrentRectifyId(id);
+    setRectifyForm({ result: '', attachmentName: '' });
+    setRectifyModalOpen(true);
+  };
+
+  const handleRectify = () => {
+    if (!currentRectifyId || !rectifyForm.result.trim()) return;
+    submitRectification({
+      anomalyId: currentRectifyId,
+      result: rectifyForm.result.trim(),
+      attachmentUrl: rectifyForm.attachmentName || undefined,
+    });
+    addNotification({
+      type: 'success',
+      title: '整改提交成功',
+      message: '整改结果已提交，等待复核',
+    });
+    setRectifyModalOpen(false);
+    fetchAnomalies();
+  };
+
+  const openReview = (id: string) => {
+    setCurrentReviewId(id);
+    setReviewForm({ opinion: '' });
+    setReviewModalOpen(true);
+  };
+
+  const handleReview = (passed: boolean) => {
+    if (!currentReviewId) return;
+    reviewAnomaly({
+      anomalyId: currentReviewId,
+      opinion: reviewForm.opinion.trim() || (passed ? '复核通过' : '复核驳回'),
+      passed,
+    });
+    addNotification({
+      type: passed ? 'success' : 'warning',
+      title: passed ? '复核通过' : '复核驳回',
+      message: passed ? '异常已关闭' : '请整改后重新提交',
+    });
+    setReviewModalOpen(false);
+    fetchAnomalies();
   };
 
   const handleExport = () => {
@@ -200,44 +274,69 @@ export default function AnomaliesPage() {
     {
       key: 'actions',
       title: '操作',
-      width: 260,
+      width: 320,
       render: (_, record) => (
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={<Eye className="w-4 h-4" />}
-          >
-            查看详情
-          </Button>
-          {record.status === 'pending' && (
+          {record.status === 'pending' ? (
             <Button
               variant="ghost"
               size="sm"
               leftIcon={<UserPlus className="w-4 h-4" />}
               onClick={() => openSingleAssign(record.anomalyId)}
             >
-              分派
+              分派整改
             </Button>
-          )}
-          {(record.status === 'assigned' || record.status === 'rejected') && (
+          ) : null}
+          {(record.status === 'assigned' || record.status === 'rectifying') ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<Eye className="w-4 h-4" />}
+                onClick={() => navigate(`/surgery/${record.surgeryId}`)}
+              >
+                查看详情
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<ClipboardCheck className="w-4 h-4" />}
+                onClick={() => openRectify(record.anomalyId)}
+              >
+                整改提交
+              </Button>
+            </>
+          ) : null}
+          {record.status === 'reviewing' ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<Eye className="w-4 h-4" />}
+                onClick={() => navigate(`/surgery/${record.surgeryId}`)}
+              >
+                查看详情
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<CheckCircle2 className="w-4 h-4" />}
+                onClick={() => openReview(record.anomalyId)}
+              >
+                复核
+              </Button>
+            </>
+          ) : null}
+          {(record.status === 'closed' || record.status === 'rejected') ? (
             <Button
               variant="ghost"
               size="sm"
-              leftIcon={<ClipboardCheck className="w-4 h-4" />}
+              leftIcon={<Eye className="w-4 h-4" />}
+              onClick={() => navigate(`/surgery/${record.surgeryId}`)}
             >
-              整改
+              查看详情
             </Button>
-          )}
-          {record.status === 'rectifying' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              leftIcon={<CheckCircle2 className="w-4 h-4" />}
-            >
-              复核
-            </Button>
-          )}
+          ) : null}
         </div>
       ),
     },
@@ -503,6 +602,99 @@ export default function AnomaliesPage() {
               type="date"
               value={assignForm.deadline}
               onChange={(e) => setAssignForm({ ...assignForm, deadline: e.target.value })}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={rectifyModalOpen}
+        title="提交整改"
+        width={480}
+        onClose={() => setRectifyModalOpen(false)}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => setRectifyModalOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleRectify}
+              disabled={!rectifyForm.result.trim()}
+            >
+              提交整改
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">
+              整改结果 <span className="text-medical-danger">*</span>
+            </label>
+            <textarea
+              rows={4}
+              placeholder="请详细描述整改情况，包括补充的资料、修正的内容等..."
+              value={rectifyForm.result}
+              onChange={(e) => setRectifyForm({ ...rectifyForm, result: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-border-default bg-white text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-medical-primary/30 focus:border-medical-primary transition-colors resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">上传整改凭证</label>
+            <div className="space-y-2">
+              <div className="border-2 border-dashed border-border-default rounded-lg p-6 text-center hover:border-medical-primary hover:bg-medical-primary-light/30 transition-colors cursor-pointer">
+                <Upload className="w-8 h-8 text-text-tertiary mx-auto mb-2" />
+                <p className="text-sm text-text-secondary">点击或拖拽文件到此处上传</p>
+                <p className="text-xs text-text-tertiary mt-1">支持图片、PDF 等格式</p>
+              </div>
+              <Input
+                placeholder="模拟文件名（如：整改凭证.pdf）"
+                value={rectifyForm.attachmentName}
+                onChange={(e) => setRectifyForm({ ...rectifyForm, attachmentName: e.target.value })}
+                prefixIcon={<FileImage className="w-4 h-4" />}
+              />
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={reviewModalOpen}
+        title="复核异常"
+        width={480}
+        onClose={() => setReviewModalOpen(false)}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => setReviewModalOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="danger"
+              leftIcon={<XCircle className="w-4 h-4" />}
+              onClick={() => handleReview(false)}
+            >
+              驳回
+            </Button>
+            <Button
+              variant="primary"
+              leftIcon={<CheckCircle2 className="w-4 h-4" />}
+              onClick={() => handleReview(true)}
+            >
+              通过
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">复核意见</label>
+            <textarea
+              rows={4}
+              placeholder="请输入复核意见..."
+              value={reviewForm.opinion}
+              onChange={(e) => setReviewForm({ ...reviewForm, opinion: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-border-default bg-white text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-medical-primary/30 focus:border-medical-primary transition-colors resize-none"
             />
           </div>
         </div>

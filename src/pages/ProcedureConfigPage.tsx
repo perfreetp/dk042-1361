@@ -23,7 +23,7 @@ import Select from '@/components/ui/Select';
 import Tag from '@/components/ui/Tag';
 import Modal from '@/components/ui/Modal';
 import { useAppStore } from '@/store/useAppStore';
-import procedureTemplates from '@/data/procedureTemplate';
+import { useProcedureStore } from '@/store/useProcedureStore';
 import type { ProcedureTemplate, RequiredItem, ItemType } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -33,14 +33,17 @@ const itemTypeConfig: Record<ItemType, { label: string; icon: typeof FileImage; 
   report: { label: '报告', icon: FileText, color: 'text-medical-success', bgColor: 'bg-medical-success-light' },
 };
 
-interface EditableItem extends RequiredItem {
-  _isNew?: boolean;
-  _isEditing?: boolean;
-}
-
 export default function ProcedureConfigPage() {
   const { addNotification } = useAppStore();
-  const [templates, setTemplates] = useState<ProcedureTemplate[]>([]);
+  const {
+    templates,
+    fetchTemplates,
+    addTemplate,
+    addItem,
+    updateItem,
+    deleteItem,
+    reorderItems,
+  } = useProcedureStore();
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Record<ItemType, boolean>>({
@@ -49,7 +52,7 @@ export default function ProcedureConfigPage() {
     report: true,
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<EditableItem | null>(null);
+  const [editingItem, setEditingItem] = useState<RequiredItem | null>(null);
   const [editingGroupType, setEditingGroupType] = useState<ItemType>('image');
   const [draggedItem, setDraggedItem] = useState<{ type: ItemType; index: number } | null>(null);
   const [dragOverItem, setDragOverItem] = useState<{ type: ItemType; index: number } | null>(null);
@@ -61,11 +64,14 @@ export default function ProcedureConfigPage() {
   });
 
   useEffect(() => {
-    setTemplates(procedureTemplates);
-    if (procedureTemplates.length > 0) {
-      setSelectedTemplateId(procedureTemplates[0].templateId);
+    fetchTemplates();
+  }, [fetchTemplates]);
+
+  useEffect(() => {
+    if (templates.length > 0 && !selectedTemplateId) {
+      setSelectedTemplateId(templates[0].templateId);
     }
-  }, []);
+  }, [templates, selectedTemplateId]);
 
   const filteredTemplates = useMemo(() => {
     if (!searchKeyword.trim()) return templates;
@@ -115,23 +121,14 @@ export default function ProcedureConfigPage() {
     setFormData({
       itemName: item.itemName,
       description: item.description || '',
-      isRequired: true,
+      isRequired: item.isRequired,
     });
     setIsModalOpen(true);
   };
 
   const handleDeleteItem = (itemId: string) => {
     if (!selectedTemplate) return;
-    setTemplates((prev) =>
-      prev.map((t) =>
-        t.templateId === selectedTemplate.templateId
-          ? {
-              ...t,
-              requiredItems: t.requiredItems.filter((i) => i.itemId !== itemId),
-            }
-          : t
-      )
-    );
+    deleteItem(selectedTemplate.templateId, itemId);
     addNotification({
       type: 'success',
       title: '删除成功',
@@ -143,25 +140,12 @@ export default function ProcedureConfigPage() {
     if (!selectedTemplate || !formData.itemName.trim()) return;
 
     if (editingItem) {
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.templateId === selectedTemplate.templateId
-            ? {
-                ...t,
-                requiredItems: t.requiredItems.map((i) =>
-                  i.itemId === editingItem.itemId
-                    ? {
-                        ...i,
-                        itemName: formData.itemName.trim(),
-                        description: formData.description.trim(),
-                        itemType: editingGroupType,
-                      }
-                    : i
-                ),
-              }
-            : t
-        )
-      );
+      updateItem(selectedTemplate.templateId, editingItem.itemId, {
+        itemName: formData.itemName.trim(),
+        description: formData.description.trim(),
+        itemType: editingGroupType,
+        isRequired: formData.isRequired,
+      });
       addNotification({
         type: 'success',
         title: '保存成功',
@@ -173,17 +157,9 @@ export default function ProcedureConfigPage() {
         itemName: formData.itemName.trim(),
         itemType: editingGroupType,
         description: formData.description.trim(),
+        isRequired: formData.isRequired,
       };
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.templateId === selectedTemplate.templateId
-            ? {
-                ...t,
-                requiredItems: [...t.requiredItems, newItem],
-              }
-            : t
-        )
-      );
+      addItem(selectedTemplate.templateId, newItem);
       addNotification({
         type: 'success',
         title: '添加成功',
@@ -216,26 +192,7 @@ export default function ProcedureConfigPage() {
       setDragOverItem(null);
       return;
     }
-
-    const sourceIndex = draggedItem.index;
-    setTemplates((prev) =>
-      prev.map((t) => {
-        if (t.templateId !== selectedTemplate.templateId) return t;
-
-        const allItems = [...t.requiredItems];
-        const typeItems = allItems.filter((i) => i.itemType === type);
-        const otherItems = allItems.filter((i) => i.itemType !== type);
-
-        const [moved] = typeItems.splice(sourceIndex, 1);
-        typeItems.splice(targetIndex, 0, moved);
-
-        return {
-          ...t,
-          requiredItems: [...otherItems, ...typeItems],
-        };
-      })
-    );
-
+    reorderItems(selectedTemplate.templateId, type, draggedItem.index, targetIndex);
     setDraggedItem(null);
     setDragOverItem(null);
   };
@@ -246,15 +203,15 @@ export default function ProcedureConfigPage() {
       procedureCode: `NEW${templates.length + 1}`,
       procedureName: '新建术式配置',
       requiredItems: [
-        { itemId: `RI${Date.now()}1`, itemName: '术前造影图像', itemType: 'image', description: '术前血管造影评估图像' },
-        { itemId: `RI${Date.now()}2`, itemName: '术中造影图像', itemType: 'image', description: '术中关键步骤造影图像' },
-        { itemId: `RI${Date.now()}3`, itemName: '术后造影图像', itemType: 'image', description: '术后效果评估造影图像' },
-        { itemId: `RI${Date.now()}4`, itemName: '手术全程录像', itemType: 'video', description: '完整手术过程录像' },
-        { itemId: `RI${Date.now()}5`, itemName: '手术记录单', itemType: 'report', description: '详细手术过程记录' },
-        { itemId: `RI${Date.now()}6`, itemName: '麻醉记录单', itemType: 'report', description: '麻醉过程及用药记录' },
+        { itemId: `RI${Date.now()}1`, itemName: '术前造影图像', itemType: 'image', description: '术前血管造影评估图像', isRequired: true },
+        { itemId: `RI${Date.now()}2`, itemName: '术中造影图像', itemType: 'image', description: '术中关键步骤造影图像', isRequired: true },
+        { itemId: `RI${Date.now()}3`, itemName: '术后造影图像', itemType: 'image', description: '术后效果评估造影图像', isRequired: true },
+        { itemId: `RI${Date.now()}4`, itemName: '手术全程录像', itemType: 'video', description: '完整手术过程录像', isRequired: true },
+        { itemId: `RI${Date.now()}5`, itemName: '手术记录单', itemType: 'report', description: '详细手术过程记录', isRequired: true },
+        { itemId: `RI${Date.now()}6`, itemName: '麻醉记录单', itemType: 'report', description: '麻醉过程及用药记录', isRequired: true },
       ],
     };
-    setTemplates((prev) => [...prev, newTemplate]);
+    addTemplate(newTemplate);
     setSelectedTemplateId(newTemplate.templateId);
     addNotification({
       type: 'success',
@@ -364,7 +321,7 @@ export default function ProcedureConfigPage() {
                     <div>
                       <div className="text-xs text-text-tertiary mb-1">必归档项目数</div>
                       <div className="text-sm font-medium text-text-primary">
-                        {selectedTemplate.requiredItems.length} 项
+                        {selectedTemplate.requiredItems.filter((i) => i.isRequired).length} 项
                       </div>
                     </div>
                   </div>
@@ -449,10 +406,17 @@ export default function ProcedureConfigPage() {
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
                                     <span className="text-sm font-medium text-text-primary">{item.itemName}</span>
-                                    <Tag variant="danger">
-                                      <Star className="w-3 h-3 mr-0.5 fill-current" />
-                                      必选
-                                    </Tag>
+                                    {item.isRequired ? (
+                                      <Tag variant="danger">
+                                        <Star className="w-3 h-3 mr-0.5 fill-current" />
+                                        必归
+                                      </Tag>
+                                    ) : (
+                                      <Tag variant="default">
+                                        <StarOff className="w-3 h-3 mr-0.5" />
+                                        可选
+                                      </Tag>
+                                    )}
                                   </div>
                                   {item.description && (
                                     <div className="text-xs text-text-tertiary mt-1">{item.description}</div>
@@ -549,26 +513,29 @@ export default function ProcedureConfigPage() {
               className="w-full rounded-lg border border-border-default px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-medical-primary/30 focus:border-medical-primary resize-none"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setFormData((prev) => ({ ...prev, isRequired: !prev.isRequired }))}
               className={cn(
-                'w-5 h-5 rounded border flex items-center justify-center transition-colors',
+                'flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all',
                 formData.isRequired
-                  ? 'bg-medical-primary border-medical-primary'
-                  : 'border-border-default hover:border-gray-400'
+                  ? 'border-medical-danger bg-medical-danger-light/30 text-medical-danger'
+                  : 'border-border-default bg-background-card text-text-secondary hover:border-gray-400'
               )}
             >
-              {formData.isRequired && <Check className="w-3.5 h-3.5 text-white" />}
+              {formData.isRequired ? (
+                <Star className="w-4 h-4 fill-current" />
+              ) : (
+                <StarOff className="w-4 h-4" />
+              )}
+              <span className="text-sm font-medium">
+                {formData.isRequired ? '必归项目' : '可选项目'}
+              </span>
             </button>
-            <span className="text-sm text-text-primary">设为必归档项目</span>
-            {formData.isRequired && (
-              <Tag variant="danger">
-                <Star className="w-3 h-3 mr-0.5 fill-current" />
-                必选
-              </Tag>
-            )}
+            <span className="text-xs text-text-tertiary">
+              {formData.isRequired ? '归档时必须上传此资料' : '归档时可选择性上传'}
+            </span>
           </div>
         </div>
       </Modal>

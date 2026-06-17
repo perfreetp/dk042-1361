@@ -9,6 +9,7 @@ import Card, { CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { useStatisticStore } from '@/store/useStatisticStore';
 import { useSurgeryStore } from '@/store/useSurgeryStore';
+import { useAnomalyStore } from '@/store/useAnomalyStore';
 import { formatNumber, formatPercent, getAnomalyTypeInfo } from '@/utils/formatUtils';
 import { formatDateTime } from '@/utils/dateUtils';
 import { exportMonthlyReport } from '@/utils/exportUtils';
@@ -25,8 +26,9 @@ interface StatusChangeItem {
 }
 
 export default function OverviewPage() {
-  const { kpiData, trendData, refreshAll, getTrendChartData } = useStatisticStore();
+  const { kpiData, refreshAll, getTrendChartData, getAllDimensionStatistics } = useStatisticStore();
   const { surgeries, fetchSurgeries } = useSurgeryStore();
+  const { getAllAnomalies } = useAnomalyStore();
   const [trendDim, setTrendDim] = useState<TrendDimension>('day');
   const [exporting, setExporting] = useState(false);
 
@@ -79,7 +81,7 @@ export default function OverviewPage() {
         archiveRate: +((data.archiveRateSum / data.count) * 100).toFixed(1),
       }));
     }
-  }, [trendData, trendDim, getTrendChartData]);
+  }, [trendDim, getTrendChartData]);
 
   const anomalyPieData = useMemo(() => {
     const typeCount: Record<string, number> = {};
@@ -119,6 +121,8 @@ export default function OverviewPage() {
       if (kpiData) {
         const now = new Date();
         const period = `${now.getFullYear()}年${now.getMonth() + 1}月`;
+        const allAnomalies = getAllAnomalies();
+        const allStatistics = getAllDimensionStatistics();
         exportMonthlyReport(
           {
             period,
@@ -127,10 +131,16 @@ export default function OverviewPage() {
               archivedSurgeries: kpiData.archivedSurgeries,
               archiveRate: kpiData.archiveRate,
               totalAnomalies: kpiData.totalAnomalies,
+              compareLastPeriod: kpiData.compareLastPeriod,
+              anomalyTypeStats: kpiData.anomalyTypeStats,
+              topDepartments: kpiData.topDepartments,
+              topOperatingRooms: kpiData.topOperatingRooms,
+              topEquipments: kpiData.topEquipments,
+              topSurgeons: kpiData.topSurgeons,
             },
             surgeries,
-            anomalies: surgeries.flatMap((s) => s.anomalies),
-            statistics: [],
+            anomalies: allAnomalies,
+            statistics: allStatistics,
           },
           `归档月报_${period}`
         );

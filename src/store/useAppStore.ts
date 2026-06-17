@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { User, Notification, ModalConfig } from '../types';
 import { mockUser, generateNotifications } from '../data/mockData';
 
@@ -20,63 +21,75 @@ interface AppState {
   setLoading: (loading: boolean) => void;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
-  user: null,
-  notifications: [],
-  modals: [],
-  loading: false,
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      user: null,
+      notifications: [],
+      modals: [],
+      loading: false,
 
-  setUser: (user) => set({ user }),
+      setUser: (user) => set({ user }),
 
-  login: () => {
-    set({ user: mockUser, notifications: generateNotifications() });
-  },
+      login: () => {
+        const persisted = get().notifications;
+        set({ user: mockUser, notifications: persisted.length > 0 ? persisted : generateNotifications() });
+      },
 
-  logout: () => {
-    set({ user: null, notifications: [], modals: [] });
-  },
+      logout: () => {
+        set({ user: null, notifications: [], modals: [] });
+      },
 
-  addNotification: (notification) => {
-    const newNotification: Notification = {
-      ...notification,
-      id: `N${Date.now()}${Math.floor(Math.random() * 1000)}`,
-      timestamp: new Date().toISOString(),
-      read: false,
-    };
-    set({ notifications: [newNotification, ...get().notifications] });
-  },
+      addNotification: (notification) => {
+        const newNotification: Notification = {
+          ...notification,
+          id: `N${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          timestamp: new Date().toISOString(),
+          read: false,
+        };
+        set({ notifications: [newNotification, ...get().notifications] });
+      },
 
-  markNotificationRead: (id) => {
-    set({
-      notifications: get().notifications.map((n) =>
-        n.id === id ? { ...n, read: true } : n
-      ),
-    });
-  },
+      markNotificationRead: (id) => {
+        set({
+          notifications: get().notifications.map((n) =>
+            n.id === id ? { ...n, read: true } : n
+          ),
+        });
+      },
 
-  markAllNotificationsRead: () => {
-    set({
-      notifications: get().notifications.map((n) => ({ ...n, read: true })),
-    });
-  },
+      markAllNotificationsRead: () => {
+        set({
+          notifications: get().notifications.map((n) => ({ ...n, read: true })),
+        });
+      },
 
-  clearNotifications: () => {
-    set({ notifications: [] });
-  },
+      clearNotifications: () => {
+        set({ notifications: [] });
+      },
 
-  openModal: (modal) => {
-    const id = `M${Date.now()}${Math.floor(Math.random() * 1000)}`;
-    set({ modals: [...get().modals, { ...modal, id }] });
-    return id;
-  },
+      openModal: (modal) => {
+        const id = `M${Date.now()}${Math.floor(Math.random() * 1000)}`;
+        set({ modals: [...get().modals, { ...modal, id }] });
+        return id;
+      },
 
-  closeModal: (id) => {
-    set({ modals: get().modals.filter((m) => m.id !== id) });
-  },
+      closeModal: (id) => {
+        set({ modals: get().modals.filter((m) => m.id !== id) });
+      },
 
-  closeAllModals: () => {
-    set({ modals: [] });
-  },
+      closeAllModals: () => {
+        set({ modals: [] });
+      },
 
-  setLoading: (loading) => set({ loading }),
-}));
+      setLoading: (loading) => set({ loading }),
+    }),
+    {
+      name: 'qc_app',
+      partialize: (state) => ({
+        user: state.user,
+        notifications: state.notifications,
+      }),
+    }
+  )
+);
