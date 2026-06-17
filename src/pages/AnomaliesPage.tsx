@@ -42,6 +42,7 @@ export default function AnomaliesPage() {
   const navigate = useNavigate();
   const {
     anomalies,
+    allAnomalies,
     selectedIds,
     loading,
     total,
@@ -91,12 +92,12 @@ export default function AnomaliesPage() {
     opinion: '',
   });
 
-  const typeStats = useMemo(() => getTypeStats(), [getTypeStats, total, anomalies]);
-  const statusStats = useMemo(() => getStatusStats(), [getStatusStats, total, anomalies]);
+  const typeStats = useMemo(() => getTypeStats(), [getTypeStats, allAnomalies]);
+  const statusStats = useMemo(() => getStatusStats(), [getStatusStats, allAnomalies]);
 
   useEffect(() => {
     fetchAnomalies();
-  }, [fetchAnomalies, typeFilter, statusFilter, page, pageSize]);
+  }, [fetchAnomalies]);
 
   const filteredAnomalies = useMemo(() => {
     if (!searchKeyword) return anomalies;

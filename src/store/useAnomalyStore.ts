@@ -23,6 +23,7 @@ interface ReviewParams {
 }
 
 interface AnomalyState {
+  allAnomalies: Anomaly[];
   anomalies: Anomaly[];
   selectedAnomaly: Anomaly | null;
   selectedIds: string[];
@@ -51,8 +52,10 @@ interface AnomalyState {
   getStatusStats: () => Record<AnomalyStatus | 'all', number>;
   getAllAnomalies: () => Anomaly[];
   getFilteredAnomalies: () => Anomaly[];
+  getAnomalyById: (id: string) => Anomaly | undefined;
+  getAnomaliesBySurgeryId: (surgeryId: string) => Anomaly[];
   clearSelectedAnomaly: () => void;
-  refreshFilteredData: () => void;
+  recalcPageData: () => void;
 }
 
 const statusNameMap: Record<AnomalyStatus, string> = {
@@ -64,7 +67,7 @@ const statusNameMap: Record<AnomalyStatus, string> = {
   rejected: '已驳回',
 };
 
-function getAllAnomalies(): Anomaly[] {
+function generateAllAnomalies(): Anomaly[] {
   const surgeries = getAllSurgeries();
   return surgeries.flatMap((s) => s.anomalies);
 }
@@ -72,6 +75,7 @@ function getAllAnomalies(): Anomaly[] {
 export const useAnomalyStore = create<AnomalyState>()(
   persist(
     (set, get) => ({
+      allAnomalies: [],
       anomalies: [],
       selectedAnomaly: null,
       selectedIds: [],
@@ -83,25 +87,32 @@ export const useAnomalyStore = create<AnomalyState>()(
       pageSize: 20,
       total: 0,
 
+      recalcPageData: () => {
+        const { allAnomalies, typeFilter, statusFilter, page, pageSize } = get();
+        let filtered = allAnomalies;
+        if (typeFilter !== 'all') {
+          filtered = filtered.filter((a) => a.anomalyType === typeFilter);
+        }
+        if (statusFilter !== 'all') {
+          filtered = filtered.filter((a) => a.status === statusFilter);
+        }
+        const total = filtered.length;
+        const start = (page - 1) * pageSize;
+        const paged = filtered.slice(start, start + pageSize);
+        set({ anomalies: paged, total });
+      },
+
       fetchAnomalies: async () => {
         set({ loading: true, error: null });
         try {
           await new Promise((resolve) => setTimeout(resolve, 300));
-          const persisted = get().anomalies;
-          const all = persisted.length > 0 ? persisted : getAllAnomalies();
-          const { typeFilter, statusFilter } = get();
-          let filtered = all;
-          if (typeFilter !== 'all') {
-            filtered = filtered.filter((a) => a.anomalyType === typeFilter);
+          const { allAnomalies: persisted } = get();
+          const all = persisted.length > 0 ? persisted : generateAllAnomalies();
+          if (persisted.length === 0) {
+            set({ allAnomalies: all });
           }
-          if (statusFilter !== 'all') {
-            filtered = filtered.filter((a) => a.status === statusFilter);
-          }
-          const total = filtered.length;
-          const { page, pageSize } = get();
-          const start = (page - 1) * pageSize;
-          const paged = filtered.slice(start, start + pageSize);
-          set({ anomalies: paged, total, loading: false });
+          get().recalcPageData();
+          set({ loading: false });
         } catch (error) {
           set({ error: error instanceof Error ? error.message : '获取异常列表失败', loading: false });
         }
@@ -111,25 +122,32 @@ export const useAnomalyStore = create<AnomalyState>()(
         set({ loading: true, error: null });
         try {
           await new Promise((resolve) => setTimeout(resolve, 200));
-          const { anomalies } = get();
-          let anomaly = anomalies.find((a) => a.anomalyId === id);
-          if (!anomaly) {
-            const all = getAllAnomalies();
-            anomaly = all.find((a) => a.anomalyId === id) || all[0];
-          }
+          const anomaly = get().getAnomalyById(id);
           set({ selectedAnomaly: anomaly || null, loading: false });
         } catch (error) {
           set({ error: error instanceof Error ? error.message : '获取异常详情失败', loading: false });
         }
       },
 
-      setTypeFilter: (type) => set({ typeFilter: type, page: 1 }),
+      setTypeFilter: (type) => {
+        set({ typeFilter: type, page: 1 });
+        get().recalcPageData();
+      },
 
-      setStatusFilter: (status) => set({ statusFilter: status, page: 1 }),
+      setStatusFilter: (status) => {
+        set({ statusFilter: status, page: 1 });
+        get().recalcPageData();
+      },
 
-      setPage: (page) => set({ page }),
+      setPage: (page) => {
+        set({ page });
+        get().recalcPageData();
+      },
 
-      setPageSize: (size) => set({ pageSize: size, page: 1 }),
+      setPageSize: (size) => {
+        set({ pageSize: size, page: 1 });
+        get().recalcPageData();
+      },
 
       toggleSelect: (id) => {
         const { selectedIds } = get();
@@ -145,6 +163,52 @@ export const useAnomalyStore = create<AnomalyState>()(
 
       selectAnomaly: (anomaly) => set({ selectedAnomaly: anomaly }),
 
+      getAnomalyById: (id) => {
+        return get().allAnomalies.find((a) => a.anomalyId === id);
+      },
+
+      getAnomaliesBySurgeryId: (surgeryId) => {
+        return get().allAnomalies.filter((a) => a.surgeryId === surgeryId);
+      },
+
+      getAllAnomalies: () => {
+        return get().allAnomalies.length > 0
+          ? get().allAnomalies
+          : generateAllAnomalies();
+      },
+
+      getFilteredAnomalies: () => {
+        const { allAnomalies, typeFilter, statusFilter } = get();
+        let filtered = allAnomalies.length > 0 ? allAnomalies : generateAllAnomalies();
+        if (typeFilter !== 'all') {
+          filtered = filtered.filter((a) => a.anomalyType === typeFilter);
+        }
+        if (statusFilter !== 'all') {
+          filtered = filtered.filter((a) => a.status === statusFilter);
+        }
+        return filtered;
+      },
+
+      getTypeStats: () => {
+        const all = get().getAllAnomalies();
+        const stats: Record<string, number> = { all: all.length };
+        const types: AnomalyType[] = ['overdue', 'missing_items', 'patient_mismatch', 'duplicate'];
+        types.forEach((t) => {
+          stats[t] = all.filter((a) => a.anomalyType === t).length;
+        });
+        return stats as Record<AnomalyType | 'all', number>;
+      },
+
+      getStatusStats: () => {
+        const all = get().getAllAnomalies();
+        const stats: Record<string, number> = { all: all.length };
+        const statuses: AnomalyStatus[] = ['pending', 'assigned', 'rectifying', 'reviewing', 'closed', 'rejected'];
+        statuses.forEach((s) => {
+          stats[s] = all.filter((a) => a.status === s).length;
+        });
+        return stats as Record<AnomalyStatus | 'all', number>;
+      },
+
       assignAnomaly: ({ anomalyId, assignee, deadline, remark }) => {
         const now = new Date().toISOString();
         const record: RectificationRecord = {
@@ -155,31 +219,34 @@ export const useAnomalyStore = create<AnomalyState>()(
           operateTime: now,
           remark: remark || '请及时完成整改',
         };
-        const updater = (a: Anomaly): Anomaly =>
+        const { allAnomalies, selectedAnomaly } = get();
+        const updatedAll = allAnomalies.map((a) =>
           a.anomalyId === anomalyId
             ? {
                 ...a,
-                status: 'assigned',
+                status: 'assigned' as AnomalyStatus,
                 statusName: statusNameMap.assigned,
                 assignee,
                 deadline,
                 rectificationTimeline: [...a.rectificationTimeline, record],
               }
-            : a;
-        const { anomalies, selectedAnomaly } = get();
-        set({
-          anomalies: anomalies.map(updater),
-          selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
-        });
-        get().refreshFilteredData();
+            : a
+        );
+        const updatedSelected =
+          selectedAnomaly?.anomalyId === anomalyId
+            ? updatedAll.find((a) => a.anomalyId === anomalyId) || null
+            : selectedAnomaly;
+        set({ allAnomalies: updatedAll, selectedAnomaly: updatedSelected });
+        get().recalcPageData();
       },
 
       batchAssign: (ids, assignee, deadline, remark) => {
         const now = new Date().toISOString();
-        const updater = (a: Anomaly): Anomaly => {
+        const { allAnomalies, selectedAnomaly } = get();
+        const updatedAll = allAnomalies.map((a) => {
           if (!ids.includes(a.anomalyId)) return a;
           const record: RectificationRecord = {
-            recordId: `REC${Date.now()}${Math.random()}`,
+            recordId: `REC${Date.now()}_${a.anomalyId}`,
             anomalyId: a.anomalyId,
             action: '分派整改',
             operator: '当前用户',
@@ -188,20 +255,23 @@ export const useAnomalyStore = create<AnomalyState>()(
           };
           return {
             ...a,
-            status: 'assigned',
+            status: 'assigned' as AnomalyStatus,
             statusName: statusNameMap.assigned,
             assignee,
             deadline,
             rectificationTimeline: [...a.rectificationTimeline, record],
           };
-        };
-        const { anomalies, selectedAnomaly } = get();
+        });
+        const updatedSelected =
+          selectedAnomaly && ids.includes(selectedAnomaly.anomalyId)
+            ? updatedAll.find((a) => a.anomalyId === selectedAnomaly.anomalyId) || null
+            : selectedAnomaly;
         set({
-          anomalies: anomalies.map(updater),
-          selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
+          allAnomalies: updatedAll,
+          selectedAnomaly: updatedSelected,
           selectedIds: [],
         });
-        get().refreshFilteredData();
+        get().recalcPageData();
       },
 
       submitRectification: ({ anomalyId, result, attachmentUrl }) => {
@@ -215,22 +285,24 @@ export const useAnomalyStore = create<AnomalyState>()(
           remark: result,
           attachmentUrl,
         };
-        const updater = (a: Anomaly): Anomaly =>
+        const { allAnomalies, selectedAnomaly } = get();
+        const updatedAll = allAnomalies.map((a) =>
           a.anomalyId === anomalyId
             ? {
                 ...a,
-                status: 'reviewing',
+                status: 'reviewing' as AnomalyStatus,
                 statusName: statusNameMap.reviewing,
                 rectificationResult: result,
                 rectificationTimeline: [...a.rectificationTimeline, record],
               }
-            : a;
-        const { anomalies, selectedAnomaly } = get();
-        set({
-          anomalies: anomalies.map(updater),
-          selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
-        });
-        get().refreshFilteredData();
+            : a
+        );
+        const updatedSelected =
+          selectedAnomaly?.anomalyId === anomalyId
+            ? updatedAll.find((a) => a.anomalyId === anomalyId) || null
+            : selectedAnomaly;
+        set({ allAnomalies: updatedAll, selectedAnomaly: updatedSelected });
+        get().recalcPageData();
       },
 
       reviewAnomaly: ({ anomalyId, opinion, passed }) => {
@@ -244,7 +316,8 @@ export const useAnomalyStore = create<AnomalyState>()(
           operateTime: now,
           remark: opinion,
         };
-        const updater = (a: Anomaly): Anomaly =>
+        const { allAnomalies, selectedAnomaly } = get();
+        const updatedAll = allAnomalies.map((a) =>
           a.anomalyId === anomalyId
             ? {
                 ...a,
@@ -254,69 +327,14 @@ export const useAnomalyStore = create<AnomalyState>()(
                 reviewer: '当前用户',
                 rectificationTimeline: [...a.rectificationTimeline, record],
               }
-            : a;
-        const { anomalies, selectedAnomaly } = get();
-        set({
-          anomalies: anomalies.map(updater),
-          selectedAnomaly: selectedAnomaly ? updater(selectedAnomaly) : null,
-        });
-        get().refreshFilteredData();
-      },
-
-      getTypeStats: () => {
-        const persisted = get().anomalies;
-        const all = persisted.length > 0 ? persisted : getAllAnomalies();
-        const stats: Record<string, number> = { all: all.length };
-        const types: AnomalyType[] = ['overdue', 'missing_items', 'patient_mismatch', 'duplicate'];
-        types.forEach((t) => {
-          stats[t] = all.filter((a) => a.anomalyType === t).length;
-        });
-        return stats as Record<AnomalyType | 'all', number>;
-      },
-
-      getStatusStats: () => {
-        const persisted = get().anomalies;
-        const all = persisted.length > 0 ? persisted : getAllAnomalies();
-        const stats: Record<string, number> = { all: all.length };
-        const statuses: AnomalyStatus[] = ['pending', 'assigned', 'rectifying', 'reviewing', 'closed', 'rejected'];
-        statuses.forEach((s) => {
-          stats[s] = all.filter((a) => a.status === s).length;
-        });
-        return stats as Record<AnomalyStatus | 'all', number>;
-      },
-
-      getAllAnomalies: () => {
-        const persisted = get().anomalies;
-        return persisted.length > 0 ? persisted : getAllAnomalies();
-      },
-
-      getFilteredAnomalies: () => {
-        const all = get().getAllAnomalies();
-        const { typeFilter, statusFilter } = get();
-        let filtered = all;
-        if (typeFilter !== 'all') {
-          filtered = filtered.filter((a) => a.anomalyType === typeFilter);
-        }
-        if (statusFilter !== 'all') {
-          filtered = filtered.filter((a) => a.status === statusFilter);
-        }
-        return filtered;
-      },
-
-      refreshFilteredData: () => {
-        const { page, pageSize, typeFilter, statusFilter } = get();
-        const all = get().getAllAnomalies();
-        let filtered = all;
-        if (typeFilter !== 'all') {
-          filtered = filtered.filter((a) => a.anomalyType === typeFilter);
-        }
-        if (statusFilter !== 'all') {
-          filtered = filtered.filter((a) => a.status === statusFilter);
-        }
-        const total = filtered.length;
-        const start = (page - 1) * pageSize;
-        const paged = filtered.slice(start, start + pageSize);
-        set({ anomalies: paged, total });
+            : a
+        );
+        const updatedSelected =
+          selectedAnomaly?.anomalyId === anomalyId
+            ? updatedAll.find((a) => a.anomalyId === anomalyId) || null
+            : selectedAnomaly;
+        set({ allAnomalies: updatedAll, selectedAnomaly: updatedSelected });
+        get().recalcPageData();
       },
 
       clearSelectedAnomaly: () => set({ selectedAnomaly: null }),
@@ -324,7 +342,7 @@ export const useAnomalyStore = create<AnomalyState>()(
     {
       name: 'qc_anomalies',
       partialize: (state) => ({
-        anomalies: state.anomalies,
+        allAnomalies: state.allAnomalies,
         selectedAnomaly: state.selectedAnomaly,
         selectedIds: state.selectedIds,
       }),

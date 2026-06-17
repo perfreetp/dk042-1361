@@ -28,7 +28,7 @@ interface StatusChangeItem {
 export default function OverviewPage() {
   const { kpiData, refreshAll, getTrendChartData, getAllDimensionStatistics } = useStatisticStore();
   const { surgeries, fetchSurgeries, syncAnomaliesToSurgeries, getAllSurgeries } = useSurgeryStore();
-  const { getAllAnomalies } = useAnomalyStore();
+  const { getAllAnomalies, allAnomalies } = useAnomalyStore();
   const [trendDim, setTrendDim] = useState<TrendDimension>('day');
   const [exporting, setExporting] = useState(false);
 
@@ -85,11 +85,13 @@ export default function OverviewPage() {
     }
   }, [trendDim, getTrendChartData]);
 
-  const allAnomalies = useMemo(() => getAllAnomalies(), [getAllAnomalies, surgeries]);
+  const anomalyList = useMemo(() => {
+    return allAnomalies.length > 0 ? allAnomalies : getAllAnomalies();
+  }, [allAnomalies, getAllAnomalies]);
 
   const anomalyPieData = useMemo(() => {
     const typeCount: Record<string, number> = {};
-    allAnomalies.forEach((a) => {
+    anomalyList.forEach((a) => {
       const typeName = getAnomalyTypeInfo(a.anomalyType).label;
       typeCount[typeName] = (typeCount[typeName] || 0) + 1;
     });
@@ -99,7 +101,7 @@ export default function OverviewPage() {
       value,
       color: colors[index % colors.length],
     }));
-  }, [allAnomalies]);
+  }, [anomalyList]);
 
   const statusChangeList = useMemo((): StatusChangeItem[] => {
     const allChanges: StatusChangeItem[] = surgeries
@@ -124,7 +126,6 @@ export default function OverviewPage() {
       if (kpiData) {
         const now = new Date();
         const period = `${now.getFullYear()}年${now.getMonth() + 1}月`;
-        const allAnomalies = getAllAnomalies();
         const allSurgeries = getAllSurgeries();
         const allStatistics = getAllDimensionStatistics();
         exportMonthlyReport(
@@ -143,7 +144,7 @@ export default function OverviewPage() {
               topSurgeons: kpiData.topSurgeons,
             },
             surgeries: allSurgeries,
-            anomalies: allAnomalies,
+            anomalies: anomalyList,
             statistics: allStatistics,
           },
           `归档月报_${period}`
