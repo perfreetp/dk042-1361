@@ -1,20 +1,47 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Download, UserPlus, Eye, ClipboardCheck, CheckCircle2, RotateCcw, ChevronDown, ChevronUp, Upload, XCircle, FileImage } from 'lucide-react';
+import {
+  Search,
+  Filter,
+  Download,
+  UserPlus,
+  Eye,
+  ClipboardCheck,
+  CheckCircle2,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp,
+  Upload,
+  XCircle,
+  FileImage,
+  X,
+  AlertTriangle,
+  Calendar,
+  Clock,
+  UserCheck,
+  FileText,
+  Video,
+  AlertCircle,
+  Wrench,
+  Send,
+} from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import AnomalyTag from '@/components/common/AnomalyTag';
 import StatusBadge from '@/components/common/StatusBadge';
+import Timeline, { type TimelineItem } from '@/components/common/Timeline';
 import Table, { TableColumn } from '@/components/ui/Table';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Select, { SelectOption } from '@/components/ui/Select';
 import Input from '@/components/ui/Input';
-import Card from '@/components/ui/Card';
+import Card, { CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
+import Tag from '@/components/ui/Tag';
 import { useAnomalyStore } from '@/store/useAnomalyStore';
 import { useAppStore } from '@/store/useAppStore';
 import { mockSurgeons } from '@/data/mockData';
 import type { Anomaly, AnomalyType, AnomalyStatus } from '@/types';
 import { formatDateTime, formatDate } from '@/utils/dateUtils';
+import { getAnomalyTypeInfo } from '@/utils/formatUtils';
 import { exportAnomalyList } from '@/utils/exportUtils';
 import { cn } from '@/lib/utils';
 
@@ -91,6 +118,60 @@ export default function AnomaliesPage() {
   const [reviewForm, setReviewForm] = useState({
     opinion: '',
   });
+
+  const [traceDrawerOpen, setTraceDrawerOpen] = useState(false);
+  const [traceAnomaly, setTraceAnomaly] = useState<Anomaly | null>(null);
+
+  const { getAnomalyById } = useAnomalyStore();
+
+  const openTrace = (record: Anomaly) => {
+    const latest = getAnomalyById(record.anomalyId);
+    setTraceAnomaly(latest || record);
+    setTraceDrawerOpen(true);
+  };
+
+  const closeTrace = () => {
+    setTraceDrawerOpen(false);
+    setTraceAnomaly(null);
+  };
+
+  const traceTimelineItems = useMemo<TimelineItem[]>(() => {
+    if (!traceAnomaly?.rectificationTimeline?.length) return [];
+    const iconMap: Record<string, { icon: typeof AlertCircle; color: string; bgColor: string }> = {
+      '发现': { icon: AlertCircle, color: 'text-medical-danger', bgColor: 'bg-medical-danger-light' },
+      '分派': { icon: UserCheck, color: 'text-medical-primary', bgColor: 'bg-medical-primary-light' },
+      '整改': { icon: Wrench, color: 'text-medical-warning', bgColor: 'bg-medical-warning-light' },
+      '复核': { icon: Search, color: 'text-medical-success', bgColor: 'bg-medical-success-light' },
+    };
+    return traceAnomaly.rectificationTimeline.map((record) => {
+      let matchedKey = '发现';
+      for (const key of Object.keys(iconMap)) {
+        if (record.action.includes(key)) {
+          matchedKey = key;
+          break;
+        }
+      }
+      const config = iconMap[matchedKey] || iconMap['发现'];
+      return {
+        id: record.recordId,
+        icon: config.icon,
+        iconColor: config.color,
+        iconBgColor: config.bgColor,
+        title: `${record.action} - ${record.operator}`,
+        time: formatDateTime(record.operateTime),
+        description: record.remark,
+      };
+    });
+  }, [traceAnomaly]);
+
+  useEffect(() => {
+    if (traceDrawerOpen && traceAnomaly) {
+      const latest = getAnomalyById(traceAnomaly.anomalyId);
+      if (latest) {
+        setTraceAnomaly(latest);
+      }
+    }
+  }, [traceDrawerOpen, traceAnomaly?.anomalyId, allAnomalies, getAnomalyById]);
 
   const typeStats = useMemo(() => getTypeStats(), [getTypeStats, allAnomalies]);
   const statusStats = useMemo(() => getStatusStats(), [getStatusStats, allAnomalies]);
@@ -274,7 +355,7 @@ export default function AnomaliesPage() {
     {
       key: 'actions',
       title: '操作',
-      width: 320,
+      width: 420,
       render: (_, record) => (
         <div className="flex items-center gap-1">
           <Button
@@ -284,6 +365,14 @@ export default function AnomaliesPage() {
             onClick={() => navigate(`/surgery/${record.surgeryId}`)}
           >
             查看详情
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<FileText className="w-4 h-4" />}
+            onClick={() => openTrace(record)}
+          >
+            追踪
           </Button>
           {record.status === 'pending' ? (
             <Button
@@ -677,6 +766,209 @@ export default function AnomaliesPage() {
           </div>
         </div>
       </Modal>
+
+      {traceDrawerOpen && traceAnomaly && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/50 transition-opacity"
+            onClick={closeTrace}
+          />
+          <div className="absolute top-0 right-0 h-full w-full max-w-[520px] bg-white shadow-xl overflow-hidden flex flex-col animate-slide-in-right">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-light flex-shrink-0">
+              <div>
+                <h3 className="text-lg font-semibold text-text-primary">异常处理追踪</h3>
+                <p className="text-xs text-text-tertiary mt-0.5">{traceAnomaly.anomalyId}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeTrace}
+                className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-gray-100 text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="p-5 space-y-5">
+                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+                  <div className="w-10 h-10 rounded-lg bg-medical-danger-light flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-medical-danger" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AnomalyTag type={traceAnomaly.anomalyType} />
+                      <StatusBadge status={traceAnomaly.status} />
+                    </div>
+                    <p className="text-sm text-text-primary line-clamp-2">
+                      {traceAnomaly.description || getAnomalyTypeInfo(traceAnomaly.anomalyType).label}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-start gap-2">
+                    <UserCheck className="w-4 h-4 text-medical-primary mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-text-tertiary">负责人</div>
+                      <div className="text-sm font-medium text-text-primary">
+                        {traceAnomaly.assignee || '待分派'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Calendar className="w-4 h-4 text-purple-600 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-text-tertiary">整改期限</div>
+                      <div className="text-sm font-medium text-text-primary">
+                        {traceAnomaly.deadline ? formatDate(traceAnomaly.deadline) : '未设置'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Clock className="w-4 h-4 text-medical-warning mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-text-tertiary">发现时间</div>
+                      <div className="text-sm font-medium text-text-primary">
+                        {formatDateTime(traceAnomaly.discoverTime)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <FileText className="w-4 h-4 text-medical-success mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-text-tertiary">整改结果</div>
+                      <div className="text-sm font-medium text-text-primary truncate" title={traceAnomaly.rectificationResult}>
+                        {traceAnomaly.rectificationResult || '待提交'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-border-light pt-4">
+                  <div className="text-sm font-medium text-text-primary mb-3">整改时间线</div>
+                  {traceTimelineItems.length > 0 ? (
+                    <Timeline items={traceTimelineItems} />
+                  ) : (
+                    <div className="text-center py-6 text-text-tertiary text-sm">暂无整改记录</div>
+                  )}
+                </div>
+
+                <div className="border-t border-border-light pt-4">
+                  <div className="text-sm font-medium text-text-primary mb-3">关联手术资料</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="p-3 rounded-lg bg-medical-primary-light/30 text-center">
+                      <FileImage className="w-6 h-6 text-medical-primary mx-auto mb-1" />
+                      <div className="text-lg font-semibold text-medical-primary">
+                        {traceAnomaly.surgery?.archiveItems?.filter((i) => i.itemType === 'image').length || 0}
+                      </div>
+                      <div className="text-xs text-text-tertiary">图像</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-purple-50 text-center">
+                      <Video className="w-6 h-6 text-purple-600 mx-auto mb-1" />
+                      <div className="text-lg font-semibold text-purple-600">
+                        {traceAnomaly.surgery?.archiveItems?.filter((i) => i.itemType === 'video').length || 0}
+                      </div>
+                      <div className="text-xs text-text-tertiary">视频</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-medical-success-light/30 text-center">
+                      <FileText className="w-6 h-6 text-medical-success mx-auto mb-1" />
+                      <div className="text-lg font-semibold text-medical-success">
+                        {traceAnomaly.surgery?.archiveItems?.filter((i) => i.itemType === 'report').length || 0}
+                      </div>
+                      <div className="text-xs text-text-tertiary">报告</div>
+                    </div>
+                  </div>
+                  {traceAnomaly.surgery && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                      <div className="text-xs text-text-tertiary mb-1">患者信息</div>
+                      <div className="text-sm font-medium text-text-primary">
+                        {traceAnomaly.surgery.patient?.name || '-'}
+                        <span className="text-text-secondary font-normal ml-2">
+                          {traceAnomaly.surgery.patient?.gender} · {traceAnomaly.surgery.patient?.age}岁
+                        </span>
+                      </div>
+                      <div className="text-xs text-text-tertiary mt-1">
+                        {traceAnomaly.surgery.surgeryName}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {traceAnomaly.reviewOpinion && (
+                  <div className={cn(
+                    'p-4 rounded-lg border',
+                    traceAnomaly.status === 'closed'
+                      ? 'bg-medical-success-light/30 border-medical-success/20'
+                      : 'bg-medical-danger-light/30 border-medical-danger/20'
+                  )}>
+                    <div className="text-xs text-text-tertiary mb-1">
+                      复核意见（{traceAnomaly.reviewer || '复核人'}）
+                    </div>
+                    <p className="text-sm text-text-primary">{traceAnomaly.reviewOpinion}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-border-light p-4 flex items-center gap-2 flex-shrink-0 bg-gray-50">
+              <Button
+                variant="secondary"
+                size="md"
+                leftIcon={<Eye className="w-4 h-4" />}
+                onClick={() => {
+                  closeTrace();
+                  navigate(`/surgery/${traceAnomaly.surgeryId}`);
+                }}
+                className="flex-1"
+              >
+                查看手术详情
+              </Button>
+              {traceAnomaly.status === 'pending' && (
+                <Button
+                  variant="primary"
+                  size="md"
+                  leftIcon={<UserPlus className="w-4 h-4" />}
+                  onClick={() => {
+                    closeTrace();
+                    openSingleAssign(traceAnomaly.anomalyId);
+                  }}
+                  className="flex-1"
+                >
+                  分派整改
+                </Button>
+              )}
+              {(traceAnomaly.status === 'assigned' || traceAnomaly.status === 'rectifying') && (
+                <Button
+                  variant="primary"
+                  size="md"
+                  leftIcon={<ClipboardCheck className="w-4 h-4" />}
+                  onClick={() => {
+                    closeTrace();
+                    openRectify(traceAnomaly.anomalyId);
+                  }}
+                  className="flex-1"
+                >
+                  整改提交
+                </Button>
+              )}
+              {traceAnomaly.status === 'reviewing' && (
+                <Button
+                  variant="primary"
+                  size="md"
+                  leftIcon={<CheckCircle2 className="w-4 h-4" />}
+                  onClick={() => {
+                    closeTrace();
+                    openReview(traceAnomaly.anomalyId);
+                  }}
+                  className="flex-1"
+                >
+                  去复核
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </PageContainer>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -21,10 +21,14 @@ import {
   Search,
   Upload,
   Send,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Card, { CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import StatusBadge from '@/components/common/StatusBadge';
+import AnomalyTag from '@/components/common/AnomalyTag';
 import Timeline, { type TimelineItem } from '@/components/common/Timeline';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -33,7 +37,8 @@ import { useSurgeryStore } from '@/store/useSurgeryStore';
 import { useAnomalyStore } from '@/store/useAnomalyStore';
 import { useAppStore } from '@/store/useAppStore';
 import type { ArchiveItem, ItemType, ItemStatus, Anomaly } from '@/types';
-import { formatDateTime } from '@/utils/dateUtils';
+import { formatDateTime, formatDate } from '@/utils/dateUtils';
+import { getAnomalyTypeInfo } from '@/utils/formatUtils';
 import { cn } from '@/lib/utils';
 
 const itemTypeConfig: Record<ItemType, { label: string; icon: typeof FileImage; color: string; bgColor: string }> = {
@@ -90,9 +95,26 @@ export default function SurgeryDetailPage() {
     return [];
   }, [surgeryId, getAnomaliesBySurgeryId, selectedSurgery, allAnomalies]);
 
+  const [selectedAnomalyIndex, setSelectedAnomalyIndex] = useState(0);
+  const [reviewForm, setReviewForm] = useState({ opinion: '' });
+
+  useEffect(() => {
+    setSelectedAnomalyIndex(0);
+  }, [surgeryId]);
+
   const currentAnomaly = useMemo<Anomaly | undefined>(() => {
-    return surgeryAnomalies[0];
-  }, [surgeryAnomalies]);
+    return surgeryAnomalies[selectedAnomalyIndex];
+  }, [surgeryAnomalies, selectedAnomalyIndex]);
+
+  const hasMultipleAnomalies = surgeryAnomalies.length > 1;
+
+  const switchAnomaly = (direction: 'prev' | 'next') => {
+    if (direction === 'prev') {
+      setSelectedAnomalyIndex((prev) => (prev > 0 ? prev - 1 : surgeryAnomalies.length - 1));
+    } else {
+      setSelectedAnomalyIndex((prev) => (prev < surgeryAnomalies.length - 1 ? prev + 1 : 0));
+    }
+  };
 
   const archiveItemsByType = useMemo(() => {
     const result: Record<ItemType, ArchiveItem[]> = {
@@ -155,6 +177,9 @@ export default function SurgeryDetailPage() {
   const isAnomaly = selectedSurgery?.archiveStatus === 'anomaly' || !!currentAnomaly;
   const anomaly = currentAnomaly;
   const canRectify = isAnomaly && anomaly && ['assigned', 'rectifying'].includes(anomaly.status);
+  const canReview = isAnomaly && anomaly && anomaly.status === 'reviewing';
+
+  const { reviewAnomaly } = useAnomalyStore();
 
   const toggleGroup = (type: ItemType) => {
     setExpandedGroups((prev) => ({ ...prev, [type]: !prev[type] }));
@@ -190,6 +215,42 @@ export default function SurgeryDetailPage() {
       setSubmitting(false);
     }
   };
+
+  const handleReview = async (passed: boolean) => {
+    if (!anomaly) return;
+    submitReviewRef.current = passed;
+    setShowReviewConfirm(true);
+  };
+
+  const submitReviewRef = useRef<boolean | null>(null);
+
+  const confirmReview = async () => {
+    if (!anomaly || submitReviewRef.current === null) return;
+    setShowReviewConfirm(false);
+    setSubmitting(true);
+    try {
+      reviewAnomaly({
+        anomalyId: anomaly.anomalyId,
+        opinion: reviewForm.opinion.trim() || (submitReviewRef.current ? '复核通过' : '复核驳回'),
+        passed: submitReviewRef.current,
+      });
+      addNotification({
+        type: submitReviewRef.current ? 'success' : 'warning',
+        title: submitReviewRef.current ? '复核通过' : '复核驳回',
+        message: submitReviewRef.current ? '异常已关闭' : '请整改后重新提交',
+      });
+      setReviewForm({ opinion: '' });
+      syncAnomaliesToSurgeries();
+      if (surgeryId) {
+        fetchSurgeryById(surgeryId);
+      }
+    } finally {
+      setSubmitting(false);
+      submitReviewRef.current = null;
+    }
+  };
+
+  const [showReviewConfirm, setShowReviewConfirm] = useState(false);
 
   const handleBack = () => {
     navigate(-1);
@@ -517,17 +578,149 @@ export default function SurgeryDetailPage() {
           </CardContent>
         </Card>
 
-        {(anomaly || timelineItems.length > 0) && (
+        {(anomaly || surgeryAnomalies.length > 0) && (
           <Card>
             <CardHeader>
-              <CardTitle>整改记录</CardTitle>
-              {anomaly && <StatusBadge status={anomaly.status} />}
+              <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-3">
+                  <CardTitle>异常与整改记录</CardTitle>
+                  {hasMultipleAnomalies && (
+                    <Tag variant="info">
+                      第 {selectedAnomalyIndex + 1} / {surgeryAnomalies.length} 条
+                    </Tag>
+                  )}
+                </div>
+                {hasMultipleAnomalies && (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      leftIcon={<ChevronLeft className="w-4 h-4" />}
+                      onClick={() => switchAnomaly('prev')}
+                    >
+                      上一条
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      rightIcon={<ChevronRight className="w-4 h-4" />}
+                      onClick={() => switchAnomaly('next')}
+                    >
+                      下一条
+                    </Button>
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
-              {timelineItems.length > 0 ? (
-                <Timeline items={timelineItems} />
+              {hasMultipleAnomalies && (
+                <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-border-light">
+                  {surgeryAnomalies.map((a, idx) => (
+                    <button
+                      key={a.anomalyId}
+                      type="button"
+                      onClick={() => setSelectedAnomalyIndex(idx)}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all',
+                        idx === selectedAnomalyIndex
+                          ? 'border-medical-primary bg-medical-primary-light/50 text-medical-primary'
+                          : 'border-border-light bg-white hover:border-medical-primary/50 hover:bg-gray-50'
+                      )}
+                    >
+                      <AlertTriangle className="w-4 h-4" />
+                      <span className="font-medium">{getAnomalyTypeInfo(a.anomalyType).label}</span>
+                      <StatusBadge status={a.status} size="sm" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {anomaly ? (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-medical-danger-light flex items-center justify-center flex-shrink-0">
+                        <AlertTriangle className="w-5 h-5 text-medical-danger" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs text-text-tertiary mb-1">异常类型</div>
+                        <AnomalyTag type={anomaly.anomalyType} />
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-medical-warning-light flex items-center justify-center flex-shrink-0">
+                        <Clock className="w-5 h-5 text-medical-warning" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs text-text-tertiary mb-1">当前状态</div>
+                        <StatusBadge status={anomaly.status} />
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-medical-primary-light flex items-center justify-center flex-shrink-0">
+                        <UserCheck className="w-5 h-5 text-medical-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs text-text-tertiary mb-1">整改负责人</div>
+                        <div className="text-sm font-medium text-text-primary">
+                          {anomaly.assignee || '待分派'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center flex-shrink-0">
+                        <Calendar className="w-5 h-5 text-purple-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs text-text-tertiary mb-1">整改期限</div>
+                        <div className="text-sm font-medium text-text-primary">
+                          {anomaly.deadline ? formatDate(anomaly.deadline) : '未设置'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {anomaly.description && (
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="text-xs text-text-tertiary mb-1.5">异常描述</div>
+                      <p className="text-sm text-text-primary">{anomaly.description}</p>
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="text-sm font-medium text-text-primary mb-3">整改时间线</div>
+                    {timelineItems.length > 0 ? (
+                      <Timeline items={timelineItems} />
+                    ) : (
+                      <div className="text-center py-8 text-text-tertiary text-sm">暂无整改记录</div>
+                    )}
+                  </div>
+
+                  {anomaly.rectificationResult && (
+                    <div className="p-4 bg-medical-warning-light/30 rounded-lg border border-medical-warning/20">
+                      <div className="text-xs text-text-tertiary mb-1.5">整改结果</div>
+                      <p className="text-sm text-text-primary">{anomaly.rectificationResult}</p>
+                    </div>
+                  )}
+
+                  {anomaly.reviewOpinion && (
+                    <div className={cn(
+                      'p-4 rounded-lg border',
+                      anomaly.status === 'closed'
+                        ? 'bg-medical-success-light/30 border-medical-success/20'
+                        : 'bg-medical-danger-light/30 border-medical-danger/20'
+                    )}>
+                      <div className="text-xs text-text-tertiary mb-1.5">
+                        复核意见（{anomaly.reviewer || '复核人'}）
+                      </div>
+                      <p className="text-sm text-text-primary">{anomaly.reviewOpinion}</p>
+                    </div>
+                  )}
+                </div>
               ) : (
-                <div className="text-center py-8 text-text-tertiary text-sm">暂无整改记录</div>
+                <div className="text-center py-8 text-text-tertiary text-sm">
+                  请选择一条异常查看详情
+                </div>
               )}
             </CardContent>
           </Card>
@@ -588,6 +781,47 @@ export default function SurgeryDetailPage() {
             </CardContent>
           </Card>
         )}
+
+        {canReview && (
+          <Card>
+            <CardHeader>
+              <CardTitle>复核操作</CardTitle>
+              <Tag variant="info">复核中</Tag>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-text-primary mb-2">复核意见</label>
+                  <textarea
+                    value={reviewForm.opinion}
+                    onChange={(e) => setReviewForm({ opinion: e.target.value })}
+                    placeholder="请填写复核意见，对整改结果进行评价..."
+                    rows={4}
+                    className="w-full rounded-lg border border-border-default px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-medical-primary/30 focus:border-medical-primary resize-none"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <Button
+                    variant="danger"
+                    leftIcon={<XCircle className="w-4 h-4" />}
+                    onClick={() => handleReview(false)}
+                    loading={submitting}
+                  >
+                    驳回
+                  </Button>
+                  <Button
+                    variant="primary"
+                    leftIcon={<CheckCircle2 className="w-4 h-4" />}
+                    onClick={() => handleReview(true)}
+                    loading={submitting}
+                  >
+                    通过
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {showConfirm && (
@@ -617,6 +851,55 @@ export default function SurgeryDetailPage() {
                 loading={submitting}
               >
                 确认提交
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReviewConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="px-6 py-4 border-b border-border-light">
+              <h3 className="text-lg font-semibold text-text-primary">
+                确认{submitReviewRef.current ? '通过' : '驳回'}复核
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <div className={cn(
+                'flex items-start gap-3 p-4 rounded-lg border',
+                submitReviewRef.current
+                  ? 'bg-medical-success-light/50 border-medical-success/20'
+                  : 'bg-medical-danger-light/50 border-medical-danger/20'
+              )}>
+                {submitReviewRef.current ? (
+                  <CheckCircle2 className="w-5 h-5 text-medical-success flex-shrink-0 mt-0.5" />
+                ) : (
+                  <XCircle className="w-5 h-5 text-medical-danger flex-shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {submitReviewRef.current ? '复核通过后异常将关闭' : '复核驳回后将退回整改'}
+                  </p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {submitReviewRef.current
+                      ? '确认整改结果符合要求，异常可以关闭。'
+                      : '确认整改结果不达标，需要重新整改。'
+                    }
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => setShowReviewConfirm(false)} disabled={submitting}>
+                取消
+              </Button>
+              <Button
+                variant={submitReviewRef.current ? 'primary' : 'danger'}
+                onClick={confirmReview}
+                loading={submitting}
+              >
+                确认{submitReviewRef.current ? '通过' : '驳回'}
               </Button>
             </div>
           </div>

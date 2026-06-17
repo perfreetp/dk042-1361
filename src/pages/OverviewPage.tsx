@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Download, Activity, FolderCheck, AlertTriangle, Scissors } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Download, Activity, FolderCheck, AlertTriangle, Scissors, Users, Building2 } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import KPICard from '@/components/charts/KPICard';
 import TrendChart from '@/components/charts/TrendChart';
@@ -7,13 +8,15 @@ import PieChart from '@/components/charts/PieChart';
 import StatusBadge from '@/components/common/StatusBadge';
 import Card, { CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
+import Tag from '@/components/ui/Tag';
 import { useStatisticStore } from '@/store/useStatisticStore';
 import { useSurgeryStore } from '@/store/useSurgeryStore';
 import { useAnomalyStore } from '@/store/useAnomalyStore';
 import { formatNumber, formatPercent, getAnomalyTypeInfo } from '@/utils/formatUtils';
 import { formatDateTime } from '@/utils/dateUtils';
 import { exportMonthlyReport } from '@/utils/exportUtils';
-import type { ArchiveStatus } from '@/types';
+import type { ArchiveStatus, AnomalyStatus } from '@/types';
+import { cn } from '@/lib/utils';
 
 type TrendDimension = 'day' | 'week' | 'month';
 
@@ -26,11 +29,13 @@ interface StatusChangeItem {
 }
 
 export default function OverviewPage() {
+  const navigate = useNavigate();
   const { kpiData, refreshAll, getTrendChartData, getAllDimensionStatistics } = useStatisticStore();
   const { surgeries, fetchSurgeries, syncAnomaliesToSurgeries, getAllSurgeries } = useSurgeryStore();
   const { getAllAnomalies, allAnomalies } = useAnomalyStore();
   const [trendDim, setTrendDim] = useState<TrendDimension>('day');
   const [exporting, setExporting] = useState(false);
+  const [loopView, setLoopView] = useState<'assignee' | 'department'>('assignee');
 
   useEffect(() => {
     refreshAll();
@@ -117,6 +122,81 @@ export default function OverviewPage() {
       .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
       .slice(0, 10);
   }, [surgeries]);
+
+  const statusColumns: { key: AnomalyStatus | 'total'; label: string; color: string; bgColor: string }[] = [
+    { key: 'pending', label: '待分派', color: 'text-gray-600', bgColor: 'bg-gray-100' },
+    { key: 'assigned', label: '已分派', color: 'text-medical-primary', bgColor: 'bg-medical-primary-light' },
+    { key: 'rectifying', label: '整改中', color: 'text-medical-warning', bgColor: 'bg-medical-warning-light' },
+    { key: 'reviewing', label: '待复核', color: 'text-purple-600', bgColor: 'bg-purple-50' },
+    { key: 'closed', label: '已关闭', color: 'text-medical-success', bgColor: 'bg-medical-success-light' },
+    { key: 'total', label: '总计', color: 'text-text-primary', bgColor: 'bg-gray-50' },
+  ];
+
+  const assigneeStats = useMemo<{ name: string; total: number; pending: number; assigned: number; rectifying: number; reviewing: number; closed: number; rejected: number }[]>(() => {
+    const map = new Map<string, Record<string, number>>();
+    anomalyList.forEach((a) => {
+      const assignee = a.assignee || '未分派';
+      if (!map.has(assignee)) {
+        map.set(assignee, {
+          pending: 0, assigned: 0, rectifying: 0, reviewing: 0, closed: 0, rejected: 0, total: 0,
+        });
+      }
+      const stats = map.get(assignee)!;
+      stats[a.status] = (stats[a.status] || 0) + 1;
+      stats.total++;
+    });
+    return Array.from(map.entries())
+      .map(([name, stats]) => ({
+        name,
+        pending: stats.pending || 0,
+        assigned: stats.assigned || 0,
+        rectifying: stats.rectifying || 0,
+        reviewing: stats.reviewing || 0,
+        closed: stats.closed || 0,
+        rejected: stats.rejected || 0,
+        total: stats.total || 0,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+  }, [anomalyList]);
+
+  const departmentStats = useMemo<{ name: string; total: number; pending: number; assigned: number; rectifying: number; reviewing: number; closed: number; rejected: number }[]>(() => {
+    const map = new Map<string, Record<string, number>>();
+    anomalyList.forEach((a) => {
+      const dept = a.surgery?.department || '未知科室';
+      if (!map.has(dept)) {
+        map.set(dept, {
+          pending: 0, assigned: 0, rectifying: 0, reviewing: 0, closed: 0, rejected: 0, total: 0,
+        });
+      }
+      const stats = map.get(dept)!;
+      stats[a.status] = (stats[a.status] || 0) + 1;
+      stats.total++;
+    });
+    return Array.from(map.entries())
+      .map(([name, stats]) => ({
+        name,
+        pending: stats.pending || 0,
+        assigned: stats.assigned || 0,
+        rectifying: stats.rectifying || 0,
+        reviewing: stats.reviewing || 0,
+        closed: stats.closed || 0,
+        rejected: stats.rejected || 0,
+        total: stats.total || 0,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+  }, [anomalyList]);
+
+  const loopStats = loopView === 'assignee' ? assigneeStats : departmentStats;
+
+  const jumpToAnomalyList = (status?: AnomalyStatus) => {
+    const { setStatusFilter, setTypeFilter, setPage } = useAnomalyStore.getState();
+    setTypeFilter('all');
+    setStatusFilter(status || 'all');
+    setPage(1);
+    navigate('/anomaly');
+  };
 
   const handleExport = async () => {
     setExporting(true);
@@ -321,6 +401,137 @@ export default function OverviewPage() {
             </Card>
           </div>
         </div>
+
+        <Card padding="none" shadow="sm">
+          <CardHeader>
+            <div className="flex items-center justify-between w-full">
+              <div>
+                <CardTitle className="text-base">异常闭环看板</CardTitle>
+                <p className="text-sm text-text-tertiary mt-0.5">按维度统计各状态异常数量，点击数字可跳转查看明细</p>
+              </div>
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                <button
+                  type="button"
+                  onClick={() => setLoopView('assignee')}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all',
+                    loopView === 'assignee'
+                      ? 'bg-white text-medical-primary shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  )}
+                >
+                  <Users className="w-4 h-4" />
+                  按负责人
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoopView('department')}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all',
+                    loopView === 'department'
+                      ? 'bg-white text-medical-primary shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  )}
+                >
+                  <Building2 className="w-4 h-4" />
+                  按科室
+                </button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="overflow-x-auto -mx-5 px-5">
+              <table className="w-full border-collapse min-w-[640px]">
+                <thead>
+                  <tr className="border-b border-border-light">
+                    <th className="text-left text-xs font-medium text-text-tertiary py-2.5 px-3 bg-gray-50 sticky left-0 z-10">
+                      {loopView === 'assignee' ? '负责人' : '科室'}
+                    </th>
+                    {statusColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        className="text-center text-xs font-medium text-text-tertiary py-2.5 px-3 bg-gray-50 whitespace-nowrap"
+                      >
+                        {col.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loopStats.map((row, idx) => (
+                    <tr
+                      key={row.name}
+                      className={cn(
+                        'border-b border-border-light hover:bg-gray-50 transition-colors',
+                        idx === loopStats.length - 1 && 'border-b-0'
+                      )}
+                    >
+                      <td className="text-left text-sm text-text-primary py-3 px-3 font-medium sticky left-0 z-10 bg-white group-hover:bg-gray-50">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full bg-medical-primary-light flex items-center justify-center flex-shrink-0">
+                            {loopView === 'assignee' ? (
+                              <Users className="w-3.5 h-3.5 text-medical-primary" />
+                            ) : (
+                              <Building2 className="w-3.5 h-3.5 text-medical-primary" />
+                            )}
+                          </div>
+                          <span className="truncate">{row.name}</span>
+                        </div>
+                      </td>
+                      {statusColumns.map((col) => {
+                        const count = (row as any)[col.key] || 0;
+                        const isTotal = col.key === 'total';
+                        return (
+                          <td
+                            key={col.key}
+                            className="text-center py-3 px-3"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => !isTotal && jumpToAnomalyList(col.key as AnomalyStatus)}
+                              className={cn(
+                                'inline-flex items-center justify-center min-w-[36px] h-7 px-2 rounded-md text-sm font-medium transition-colors',
+                                isTotal
+                                  ? 'bg-gray-100 text-text-primary cursor-default'
+                                  : count > 0
+                                    ? cn(col.bgColor, col.color, 'hover:opacity-80 cursor-pointer')
+                                    : 'bg-gray-50 text-text-tertiary cursor-default'
+                              )}
+                              disabled={isTotal || count === 0}
+                            >
+                              {count}
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  {loopStats.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={statusColumns.length + 1}
+                        className="text-center py-8 text-sm text-text-tertiary"
+                      >
+                        暂无统计数据
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between mt-4 pt-3 border-t border-border-light">
+              <Tag variant="info">共 {loopStats.length} 位{loopView === 'assignee' ? '负责人' : '科室'}</Tag>
+              <Button
+                variant="ghost"
+                size="sm"
+                rightIcon={<span className="text-xs">→</span>}
+                onClick={() => jumpToAnomalyList()}
+              >
+                查看完整清单
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </PageContainer>
   );
